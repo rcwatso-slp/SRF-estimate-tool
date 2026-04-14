@@ -84,7 +84,7 @@ function createItem() {
 }
 
 // ── per-item calculation ──────────────────────────────────────────────────────
-function calcItem(item, isFreeShipping, supplierShippingTotal, totalQty) {
+function calcItem(item, isFreeShipping, supplierShippingTotal, totalQty, multiplier) {
   const qty      = Number(item.quantity)      || 0;
   const gPrice   = Number(item.garmentPrice)  || 0;
   const dPrice   = Number(item.decorationPrice) || 0;
@@ -93,7 +93,12 @@ function calcItem(item, isFreeShipping, supplierShippingTotal, totalQty) {
   const decFlat = item.decorationType === 'patch' ? 30 : 15;
 
   // decoration cost per unit (amortised)
-  const decCostPerUnit = qty > 0 ? (dPrice * qty + decFlat) / qty : 0;
+  // Transfers: dPrice is the total order price for this item; patches: dPrice is per-unit
+  const decCostPerUnit = qty > 0
+    ? item.decorationType === 'patch'
+      ? (dPrice * qty + decFlat) / qty
+      : (dPrice + decFlat) / qty
+    : 0;
 
   // supplier shipping allocated to this item (total, not per-unit)
   const itemShipTotal = isFreeShipping || totalQty === 0
@@ -103,7 +108,7 @@ function calcItem(item, isFreeShipping, supplierShippingTotal, totalQty) {
   const shipPerUnit = qty > 0 ? itemShipTotal / qty : 0;
 
   const totalCostPerUnit = gPrice + decCostPerUnit + shipPerUnit;
-  const sellPerUnit      = totalCostPerUnit * 2;
+  const sellPerUnit      = totalCostPerUnit * multiplier;
   const totalCost        = totalCostPerUnit * qty;
   const totalSell        = sellPerUnit * qty;
 
@@ -116,7 +121,7 @@ function calcItem(item, isFreeShipping, supplierShippingTotal, totalQty) {
     sellPerUnit,
     totalCost,
     totalSell,
-    margin: 0.50,
+    margin: multiplier,
   };
 }
 
@@ -187,14 +192,14 @@ function ItemCard({ item, index, calc, isFreeShipping, onChange, onRemove, canRe
         {/* decoration price */}
         <div>
           <div className="label">
-            {item.decorationType === 'patch' ? 'Price / Patch ($)' : 'Transfer Price / Unit ($)'}
+            {item.decorationType === 'patch' ? 'Price / Patch ($)' : 'Total Transfer Price ($)'}
           </div>
           <input type="number" min="0" step="0.01" className="num-input"
             placeholder="0.00" value={item.decorationPrice} onChange={set('decorationPrice')} />
           <div className="text-xs text-gray-400 mt-1">
             {item.decorationType === 'patch'
               ? <span>Look up at <span className="text-blue-500">stahlsusa.com</span> · +$30 flat ship</span>
-              : <span>Look up at <span className="text-blue-500">transferexpress.com</span> · +$15 flat ship</span>
+              : <span>Enter total for all {Number(item.quantity)||0} transfers · +$15 flat ship added automatically</span>
             }
           </div>
         </div>
@@ -245,21 +250,40 @@ function ResultBox({ label, val, sub, highlight }) {
 }
 
 // ── PDF Generator ─────────────────────────────────────────────────────────────
-function buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimateDate, notes) {
+function buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimateDate, notes, discountAmount, discountedTotal, discountType, discountValue) {
+  const decLabels = { screen_transfer: 'Screen Printed Transfer', ucm: 'UCM Transfer', patch: 'Heat-Applied Patch' };
+
   const rows = items.map((item, i) => {
     const c = calcs[i];
     const qty = Number(item.quantity) || 0;
     const name = item.name || `Item ${i + 1}`;
-    const decLabel = { screen_transfer: 'Screen Printed Transfer', ucm: 'UCM Transfer', patch: 'Heat-Applied Patch' }[item.decorationType];
-    return `
-      <tr style="border-bottom:1px solid #e5e7eb">
-        <td style="padding:10px 12px;font-weight:600">${name}</td>
-        <td style="padding:10px 12px;color:#555">${decLabel}</td>
-        <td style="padding:10px 12px;text-align:center">${qty}</td>
-        <td style="padding:10px 12px;text-align:right">$${fmt(c.sellPerUnit)}</td>
-        <td style="padding:10px 12px;text-align:right;font-weight:700">$${fmt(c.totalSell)}</td>
+    const decLabel = decLabels[item.decorationType];
+    // Sell-price components (cost × 2 for each)
+    const garmentSellUnit = c.gPrice * c.margin;
+    const decSellUnit     = c.decCostPerUnit * c.margin;
+    const shipSellUnit    = c.shipPerUnit * c.margin;
+    const subRow = (label, detail, sellUnit) => `
+      <tr style="background:#fafafa;border-bottom:1px solid #f0f0f0">
+        <td style="padding:3px 12px 3px 26px;font-size:12px;color:#555">${label}</td>
+        <td style="padding:3px 12px;font-size:12px;color:#888">${detail}</td>
+        <td style="padding:3px 12px;text-align:center;font-size:12px;color:#555">${qty}</td>
+        <td style="padding:3px 12px;text-align:right;font-size:12px;color:#555">$${fmt(sellUnit)}</td>
+        <td style="padding:3px 12px;text-align:right;font-size:12px;color:#555">$${fmt(sellUnit * qty)}</td>
       </tr>`;
+    return `
+      <tr style="background:#fff;border-top:2px solid #e5e7eb">
+        <td colspan="4" style="padding:10px 12px 4px;font-weight:700;font-size:14px">${name}</td>
+        <td style="padding:10px 12px 4px;text-align:right;font-weight:800;font-size:15px;color:#C41C1C">$${fmt(c.totalSell)}</td>
+      </tr>
+      ${subRow('Garments', 'S&amp;S Activewear', garmentSellUnit)}
+      ${subRow('Decoration', decLabel, decSellUnit)}
+      ${shipSellUnit > 0.001 ? subRow('Shipping', 'S&amp;S Activewear', shipSellUnit) : ''}`;
   }).join('');
+
+  const hasDiscount = discountAmount > 0;
+  const discountLabel = discountType === 'percent'
+    ? `Discount (${Number(discountValue)}% off)`
+    : 'Discount';
 
   return `
   <div style="font-family:system-ui,sans-serif;max-width:760px;margin:0 auto;padding:0;color:#1A1A1A">
@@ -285,8 +309,8 @@ function buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimate
       <table style="width:100%;border-collapse:collapse;font-size:14px">
         <thead>
           <tr style="background:#1A1A1A;color:#fff">
-            <th style="padding:10px 12px;text-align:left;font-weight:700">Item</th>
-            <th style="padding:10px 12px;text-align:left;font-weight:700">Decoration</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:700">Item / Component</th>
+            <th style="padding:10px 12px;text-align:left;font-weight:700">Detail</th>
             <th style="padding:10px 12px;text-align:center;font-weight:700">Qty</th>
             <th style="padding:10px 12px;text-align:right;font-weight:700">Unit Price</th>
             <th style="padding:10px 12px;text-align:right;font-weight:700">Line Total</th>
@@ -299,10 +323,19 @@ function buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimate
     <!-- Totals -->
     <div style="background:#f9f9f9;padding:16px 32px;border-top:2px solid #C41C1C">
       <div style="display:flex;justify-content:flex-end">
-        <div style="min-width:240px">
-          <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:15px">
-            <span style="color:#555">Order Total</span>
-            <span style="font-weight:800;font-size:20px;color:#C41C1C">$${fmt(totals.totalSell)}</span>
+        <div style="min-width:260px">
+          <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:14px;border-bottom:1px solid #e5e7eb">
+            <span style="color:#555">Subtotal</span>
+            <span style="font-weight:600">$${fmt(totals.totalSell)}</span>
+          </div>
+          ${hasDiscount ? `
+          <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:14px;border-bottom:1px solid #e5e7eb;color:#16a34a">
+            <span>${discountLabel}</span>
+            <span style="font-weight:600">-$${fmt(discountAmount)}</span>
+          </div>` : ''}
+          <div style="display:flex;justify-content:space-between;padding:8px 0 4px">
+            <span style="font-weight:700;font-size:15px">Order Total</span>
+            <span style="font-weight:800;font-size:22px;color:#C41C1C">$${fmt(hasDiscount ? discountedTotal : totals.totalSell)}</span>
           </div>
         </div>
       </div>
@@ -323,9 +356,12 @@ function buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimate
 }
 
 // ── Summary Panel ─────────────────────────────────────────────────────────────
-function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estimateNumber, estimateDate, notes }) {
+function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estimateNumber, estimateDate, notes,
+  discountType, discountValue, setDiscountType, setDiscountValue, discountAmount, discountedTotal, effectiveMargin,
+  marginPct, setMarginPct, multiplier }) {
   const exportPdf = () => {
-    const html = buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimateDate, notes);
+    const html = buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimateDate, notes,
+      discountAmount, discountedTotal, discountType, discountValue);
     const el = document.getElementById('pdf-output');
     el.style.display = 'block';
     el.innerHTML = html;
@@ -386,13 +422,68 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
           <span className="result-val">{fmtDollar(totals.totalCost)}</span>
         </div>
         <div className="result-row">
-          <span className="result-label">Total Sell Price</span>
+          <span className="result-label">Subtotal</span>
           <span className="sell-price">{fmtDollar(totals.totalSell)}</span>
         </div>
-        <div className="result-row">
-          <span className="result-label">Overall Margin</span>
-          <span className="result-val text-green-600">50%</span>
+
+        {/* ── Margin ── */}
+        <div className="divider" />
+        <div className="section-head mb-2">Target Margin</div>
+        <div className="flex items-center gap-2">
+          <input type="number" min="1" max="95" step="1" className="num-input" style={{width:80}}
+            value={marginPct} onChange={e => setMarginPct(e.target.value)} />
+          <span className="text-sm text-gray-500">%</span>
+          <span className="ml-auto text-xs font-mono bg-gray-100 px-2 py-1 rounded text-brand-black">
+            ×{fmt(multiplier, 3)}
+          </span>
         </div>
+        <div className="text-xs text-gray-400 mt-1">Default 50% = ×2.000 multiplier</div>
+
+        {/* ── Discount ── */}
+        <div className="divider" />
+        <div className="section-head mb-2">Discount (optional)</div>
+        <div className="flex gap-2 mb-2">
+          {['percent','dollar'].map(t => (
+            <button key={t} onClick={() => setDiscountType(t)}
+              className="flex-1 py-1.5 text-xs font-semibold rounded border transition-colors"
+              style={{ background: discountType===t ? '#C41C1C' : '#fff', color: discountType===t ? '#fff' : '#374151', borderColor: discountType===t ? '#C41C1C' : '#d1d5db' }}>
+              {t === 'percent' ? '% Off' : '$ Off'}
+            </button>
+          ))}
+        </div>
+        <input type="number" min="0" step={discountType==='percent' ? '1' : '0.01'}
+          className="num-input"
+          placeholder={discountType==='percent' ? 'e.g. 10  →  10% off' : 'e.g. 25.00  →  $25 off'}
+          value={discountValue}
+          onChange={e => setDiscountValue(e.target.value)}
+        />
+        {discountAmount > 0 && (
+          <>
+            <div className="result-row mt-2">
+              <span className="result-label" style={{color:'#16a34a'}}>Discount</span>
+              <span className="result-val" style={{color:'#16a34a'}}>-{fmtDollar(discountAmount)}</span>
+            </div>
+            <div className="divider" />
+            <div className="result-row">
+              <span className="result-label font-bold">Client Total</span>
+              <span className="sell-price">{fmtDollar(discountedTotal)}</span>
+            </div>
+            <div className="result-row">
+              <span className="result-label">Effective Margin</span>
+              <span className="result-val" style={{color: effectiveMargin < 30 ? '#ef4444' : effectiveMargin < 40 ? '#f97316' : '#16a34a'}}>
+                {fmt(effectiveMargin, 1)}%
+              </span>
+            </div>
+          </>
+        )}
+        {discountAmount === 0 && (
+          <div className="result-row mt-1">
+            <span className="result-label">Overall Margin</span>
+            <span className="result-val" style={{color: Number(marginPct||50) < 30 ? '#ef4444' : Number(marginPct||50) < 40 ? '#f97316' : '#16a34a'}}>
+              {fmt(Number(marginPct)||50, 1)}%
+            </span>
+          </div>
+        )}
       </div>
 
       <button
@@ -417,7 +508,10 @@ function App() {
   const [estimateNumber, setEstNum]   = useState('');
   const [estimateDate, setEstDate]    = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes]             = useState('');
-  const [supplierShipping, setSupShip] = useState('');
+  const [supplierShipping, setSupShip]    = useState('');
+  const [marginPct, setMarginPct]          = useState('50');
+  const [discountType, setDiscountType]   = useState('percent');
+  const [discountValue, setDiscountValue] = useState('');
 
   // derived
   const garmentSubtotal = useMemo(
@@ -428,9 +522,12 @@ function App() {
   const totalQty = useMemo(() => items.reduce((s, it) => s + (Number(it.quantity) || 0), 0), [items]);
   const supplierShippingNum = isFreeShipping ? 0 : (Number(supplierShipping) || 0);
 
+  const marginNum  = Math.min(Math.max(Number(marginPct) || 50, 1), 95);
+  const multiplier = 1 / (1 - marginNum / 100);
+
   const calcs = useMemo(
-    () => items.map(it => calcItem(it, isFreeShipping, supplierShippingNum, totalQty)),
-    [items, isFreeShipping, supplierShippingNum, totalQty]
+    () => items.map(it => calcItem(it, isFreeShipping, supplierShippingNum, totalQty, multiplier)),
+    [items, isFreeShipping, supplierShippingNum, totalQty, multiplier]
   );
 
   const totals = useMemo(() => ({
@@ -440,6 +537,18 @@ function App() {
     totalCost: calcs.reduce((s, c) => s + c.totalCost, 0),
     totalSell: calcs.reduce((s, c) => s + c.totalSell, 0),
   }), [calcs, totalQty, garmentSubtotal, supplierShippingNum]);
+
+  const discountNum    = Number(discountValue) || 0;
+  const discountAmount = useMemo(() => {
+    if (!discountNum) return 0;
+    return discountType === 'percent'
+      ? totals.totalSell * (discountNum / 100)
+      : Math.min(discountNum, totals.totalSell);
+  }, [discountType, discountNum, totals.totalSell]);
+  const discountedTotal = totals.totalSell - discountAmount;
+  const effectiveMargin = discountedTotal > 0 && totals.totalCost > 0
+    ? ((discountedTotal - totals.totalCost) / discountedTotal) * 100
+    : marginNum;
 
   const handleChange = useCallback((id, field, value) => {
     setItems(prev => prev.map(it => it.id === id ? { ...it, [field]: value } : it));
@@ -585,6 +694,16 @@ function App() {
               estimateNumber={estimateNumber}
               estimateDate={estimateDate}
               notes={notes}
+              discountType={discountType}
+              discountValue={discountValue}
+              setDiscountType={setDiscountType}
+              setDiscountValue={setDiscountValue}
+              discountAmount={discountAmount}
+              discountedTotal={discountedTotal}
+              effectiveMargin={effectiveMargin}
+              marginPct={marginPct}
+              setMarginPct={setMarginPct}
+              multiplier={multiplier}
             />
 
             {/* Per-item breakdown */}
