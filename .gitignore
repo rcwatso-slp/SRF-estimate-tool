@@ -1,0 +1,15 @@
+.DS_Store
+Thumbs.db
+
+# Local design/source assets. The app currently embeds the production logo in index.html.
+*.ai
+*.psd
+*.sketch
+*.fig
+logo.png
+*Logo.ai.png
+
+# Local/generated exports
+*.pdf
+dist/
+_site/

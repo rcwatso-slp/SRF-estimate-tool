@@ -7,42 +7,50 @@ Pricing estimate generator for SRF Screen Printing & Apparel Decorating. Built a
 - Multi-item estimates with live calculations
 - S&S Activewear garment pricing with $200 free-shipping threshold
 - Three decoration types: Screen Printed Transfers, UCM Transfers, and Heat-Applied Patches
-- 50% margin pricing (cost × 2)
+- Adjustable target margin, defaulting to 50% margin (cost × 2)
 - Client-facing PDF export (margin hidden from output)
 - Brand-colored UI matching SRF logo
 
+## Public deployment note
+
+This app is safe to host publicly as long as `index.html` does not contain private pricing rules, vendor credentials, employee/customer data, API keys, or unpublished artwork files. The app runs entirely in the browser and does not store submitted estimates on a server.
+
+Before publishing, review:
+
+- Target margin defaults and pricing assumptions
+- Supplier/free-shipping thresholds
+- Embedded logo/brand assets
+- Any text that should not be public
+
 ## Deploying to GitHub Pages
 
-### Step 1 — Create a GitHub repository
+This repo is prepared for GitHub Pages with GitHub Actions. The workflow publishes only `index.html` from a temporary `_site` folder, so local design/source files are not deployed.
 
-1. Go to [github.com](https://github.com) and create a new repository (e.g. `srf-estimate`)
-2. Make it **Public** (required for free GitHub Pages)
+### Step 1 — Create or choose a GitHub repository
 
-### Step 2 — Upload the file
+Create a repository on GitHub, then connect this local project to it:
 
-**Option A — via GitHub web UI (simplest):**
-1. Open your new repo and click **Add file → Upload files**
-2. Drag `index.html` into the upload area
-3. Click **Commit changes**
-
-**Option B — via Git CLI:**
 ```bash
-git init
-git add index.html
-git commit -m "Add SRF estimate tool"
 git branch -M main
 git remote add origin https://github.com/YOUR_USERNAME/srf-estimate.git
 git push -u origin main
 ```
 
-### Step 3 — Enable GitHub Pages
+If a remote already exists, use this instead:
 
-1. In your repo, go to **Settings → Pages**
-2. Under **Source**, select **Deploy from a branch**
-3. Set branch to `main`, folder to `/ (root)`
-4. Click **Save**
+```bash
+git remote set-url origin https://github.com/YOUR_USERNAME/srf-estimate.git
+git push -u origin main
+```
+
+### Step 2 — Enable GitHub Pages
+
+1. In the GitHub repo, go to **Settings → Pages**
+2. Under **Build and deployment**, set **Source** to **GitHub Actions**
+3. Push to `main` or manually run **Deploy GitHub Pages** from the Actions tab
 
 Your app will be live at:
+
 ```
 https://YOUR_USERNAME.github.io/srf-estimate/
 ```
@@ -51,7 +59,7 @@ https://YOUR_USERNAME.github.io/srf-estimate/
 
 ## Updating the app
 
-Re-upload `index.html` via the GitHub web UI or push a new commit. GitHub Pages automatically redeploys on every push to `main`.
+Commit changes and push to `main`. GitHub Actions will publish the updated `index.html` automatically.
 
 ## Local testing
 
@@ -66,7 +74,7 @@ open index.html   # macOS
 | Input | Source |
 |-------|--------|
 | Garment price / unit | Look up on [ssactivewear.com](https://ssactivewear.com) |
-| Transfer price / unit | Look up on [transferexpress.com](https://transferexpress.com) |
+| Total transfer price for the item | Look up/order total on [transferexpress.com](https://transferexpress.com) |
 | Patch price / unit | Look up on [stahlsusa.com](https://stahlsusa.com) |
 
 | Decoration type | Flat shipping added |
@@ -77,10 +85,11 @@ open index.html   # macOS
 
 **Formula:**
 ```
-Decoration cost/unit = (price/unit × qty + flat shipping) ÷ qty
+Transfer decoration cost/unit = (total transfer price + flat shipping) ÷ qty
+Patch decoration cost/unit = (patch price/unit × qty + flat shipping) ÷ qty
 Supplier shipping/unit = proportional share of S&S shipping ÷ qty
 Total cost/unit = garment + decoration + supplier shipping
-Sell price/unit = total cost/unit × 2   →  50% margin
+Sell price/unit = total cost/unit ÷ (1 - target margin %)   →  defaults to ×2 at 50% margin
 ```
 
 S&S supplier shipping is **free** when the combined garment subtotal across all items reaches **$200**.
