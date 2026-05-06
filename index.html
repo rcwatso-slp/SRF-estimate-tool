@@ -420,52 +420,37 @@ function inferGarmentType(title) {
   return 'tee';
 }
 
-function SSSearchModal({ onClose, onSelect }) {
+function groupByColor(products) {
+  const map = {};
+  (products || []).forEach(p => {
+    const key = p.colorName || p.colorID || 'Unknown';
+    if (!map[key]) map[key] = { colorName: key, prices: [], totalQty: 0, image: p.colorFrontImage || p.styleImage || null };
+    map[key].prices.push({ sizeID: p.sizeID, sizeName: p.sizeName || p.sizeID, price: p.price || 0, qty: p.qty || 0 });
+    map[key].totalQty += (p.qty || 0);
+  });
+  return Object.values(map).sort((a, b) => a.colorName.localeCompare(b.colorName));
+}
+
+function SSSearchModal({ onClose, onSelect, initialStyle, initialProducts }) {
   const [query, setQuery]             = React.useState('');
-  const [results, setResults]         = React.useState([]);
+  const [styleList, setStyleList]     = React.useState([]);
   const [loading, setLoading]         = React.useState(false);
   const [error, setError]             = React.useState('');
-  const [selStyle, setSelStyle]       = React.useState(null);
-  const [products, setProducts]       = React.useState([]);
+  const [selStyle, setSelStyle]       = React.useState(initialStyle || null);
+  const [products, setProducts]       = React.useState(initialProducts || []);
   const [loadingProds, setLoadingProds] = React.useState(false);
   const timerRef = React.useRef(null);
   const inputRef = React.useRef(null);
 
-  React.useEffect(() => { if (inputRef.current) inputRef.current.focus(); }, []);
-
-  // Close on Escape
+  React.useEffect(() => { if (inputRef.current && !initialStyle) inputRef.current.focus(); }, []);
   React.useEffect(() => {
-    const handler = (e) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
+    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
   }, [onClose]);
 
-  const doSearch = async (q) => {
-    const t = q.trim();
-    if (!t) { setResults([]); return; }
-    setLoading(true); setError('');
-    try {
-      // Try as a style ID first (e.g. "G500", "PC61")
-      const r = await fetch(`/api/ss?path=styles&StyleID=${encodeURIComponent(t.toUpperCase())}`);
-      const data = await r.json();
-      if (r.ok && Array.isArray(data) && data.length) { setResults(data.slice(0, 40)); setLoading(false); return; }
-      // Fall back: search by brand name (pass as-is)
-      const r2 = await fetch(`/api/ss?path=styles&BrandName=${encodeURIComponent(t)}`);
-      const d2 = await r2.json();
-      if (r2.ok && Array.isArray(d2) && d2.length) { setResults(d2.slice(0, 40)); }
-      else { setResults([]); setError('No results. Try a style number (e.g. G500, PC61) or brand name.'); }
-    } catch(e) { setError(e.message); }
-    setLoading(false);
-  };
-
-  const handleInput = (e) => {
-    const q = e.target.value; setQuery(q);
-    clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => doSearch(q), 450);
-  };
-
-  const selectStyle = async (style) => {
-    setSelStyle(style); setProducts([]); setLoadingProds(true);
+  const loadColors = async (style) => {
+    setSelStyle(style); setProducts([]); setLoadingProds(true); setError('');
     try {
       const r = await fetch(`/api/ss?path=products&StyleID=${encodeURIComponent(style.styleID)}`);
       const data = await r.json();
@@ -474,109 +459,114 @@ function SSSearchModal({ onClose, onSelect }) {
     setLoadingProds(false);
   };
 
-  // Group products by color
-  const colorGroups = React.useMemo(() => {
-    const map = {};
-    products.forEach(p => {
-      const key = p.colorName || p.colorID || 'Unknown';
-      if (!map[key]) map[key] = { colorName: key, prices: [], totalQty: 0, image: p.colorFrontImage || p.styleImage || null };
-      map[key].prices.push({ sizeID: p.sizeID, sizeName: p.sizeName || p.sizeID, price: p.price || 0, qty: p.qty || 0 });
-      map[key].totalQty += (p.qty || 0);
-    });
-    return Object.values(map).sort((a, b) => a.colorName.localeCompare(b.colorName));
-  }, [products]);
-
-  const handleColorSelect = (colorData) => {
-    const prices = colorData.prices.sort((a, b) => a.price - b.price);
-    const basePrice = prices[0]?.price || 0;
-    const label = `${selStyle.brandName || ''} ${selStyle.title || selStyle.styleID} – ${colorData.colorName}`.trim();
-    const garmentType = inferGarmentType((selStyle.title || '') + ' ' + (selStyle.categoryName || ''));
-    onSelect({ name: label, garmentPrice: basePrice.toFixed(2), garmentType, label });
+  const doSearch = async (q) => {
+    const t = q.trim();
+    if (!t || t.length < 2) { setStyleList([]); return; }
+    setLoading(true); setError('');
+    try {
+      const r = await fetch(`/api/ss?path=search&q=${encodeURIComponent(t)}`);
+      const data = await r.json();
+      if (data.error) throw new Error(data.error);
+      if (data.type === 'direct') {
+        // Skip style list — go straight to colors
+        setSelStyle(data.styleInfo);
+        setProducts(data.products || []);
+        setStyleList([]);
+      } else if (data.type === 'styles' && data.results?.length) {
+        setStyleList(data.results);
+      } else {
+        setStyleList([]);
+        setError('No results. Try a style number (e.g. 3001CVC, G500) or brand name (e.g. Bella, Gildan).');
+      }
+    } catch(e) { setError(e.message); }
+    setLoading(false);
   };
 
-  const overlayStyle = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '40px 16px', overflowY: 'auto' };
-  const panelStyle   = { background: '#fff', borderRadius: 12, width: '100%', maxWidth: 640, minHeight: 400, boxShadow: '0 8px 40px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column' };
+  const colorGroups = React.useMemo(() => groupByColor(products), [products]);
+
+  const handleColorSelect = (cg) => {
+    const sorted = cg.prices.sort((a, b) => a.price - b.price);
+    const basePrice = sorted[0]?.price || 0;
+    const label = `${selStyle.brandName || ''} ${selStyle.title || selStyle.styleID} – ${cg.colorName}`.trim();
+    const garmentType = inferGarmentType((selStyle.title || '') + ' ' + (selStyle.categoryName || ''));
+    onSelect({ name: label, garmentPrice: basePrice.toFixed(2), garmentType, label, prices: cg.prices });
+  };
 
   return (
-    <div style={overlayStyle} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={panelStyle}>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '40px 16px', overflowY: 'auto' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background: '#fff', borderRadius: 12, width: '100%', maxWidth: 640, minHeight: 300, boxShadow: '0 8px 40px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column' }}>
+
         {/* Header */}
         <div style={{ padding: '16px 20px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: 10 }}>
-          {selStyle && (
-            <button onClick={() => { setSelStyle(null); setProducts([]); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: 18, padding: '0 4px' }}>←</button>
-          )}
+          {selStyle && <button onClick={() => { setSelStyle(null); setProducts([]); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: 18, padding: '0 4px' }}>←</button>}
           <div style={{ fontWeight: 800, fontSize: 15, flex: 1 }}>
-            {selStyle ? `${selStyle.brandName || ''} ${selStyle.title || selStyle.styleID}` : 'Search S&S Activewear Catalog'}
+            {selStyle ? `${selStyle.brandName || ''} ${selStyle.title || selStyle.styleID} — Pick a Color` : 'Search S&S Activewear'}
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 22 }}>×</button>
         </div>
 
-        {/* Search bar (only on style list view) */}
+        {/* Search input — only shown when browsing style list */}
         {!selStyle && (
           <div style={{ padding: '12px 20px', borderBottom: '1px solid #f0f0f0' }}>
-            <input ref={inputRef} type="text" value={query} onChange={handleInput}
-              placeholder="Style number (G500, PC61…) or brand name"
+            <input ref={inputRef} type="text" value={query}
+              onChange={e => { const v = e.target.value; setQuery(v); clearTimeout(timerRef.current); timerRef.current = setTimeout(() => doSearch(v), 420); }}
+              placeholder="Style # (3001CVC, G500, PC61) or brand name (Bella, Gildan…)"
               style={{ width: '100%', padding: '9px 12px', border: '1.5px solid #d1d5db', borderRadius: 7, fontSize: 14, boxSizing: 'border-box', outline: 'none' }} />
-            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 5 }}>Tip: style numbers search fastest. Brand names also work (e.g. "Gildan", "Port &amp; Company").</div>
           </div>
         )}
 
         {/* Body */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          {error && <div style={{ padding: '10px 20px', color: '#ef4444', fontSize: 13 }}>{error}</div>}
+          {error && <div style={{ padding: '10px 20px', color: '#ef4444', fontSize: 13, background: '#fef2f2' }}>{error}</div>}
 
           {/* Style list */}
-          {!selStyle && (
-            <>
-              {loading && <div style={{ padding: 24, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>Searching…</div>}
-              {!loading && !query && <div style={{ padding: 24, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>Enter a style number or brand above to search.</div>}
-              {!loading && results.map(s => (
-                <div key={s.styleID} onClick={() => selectStyle(s)}
-                  style={{ padding: '11px 20px', borderBottom: '1px solid #f5f5f5', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}
-                  onMouseOver={e => e.currentTarget.style.background = '#f9fafb'}
-                  onMouseOut={e => e.currentTarget.style.background = '#fff'}>
-                  {s.styleImage && <img src={s.styleImage} style={{ width: 44, height: 44, objectFit: 'contain', borderRadius: 4, border: '1px solid #e5e7eb', flexShrink: 0 }} alt="" onError={e => e.target.style.display='none'} />}
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: 13, color: '#1A1A1A' }}>{s.brandName} {s.title || s.styleID}</div>
-                    <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{s.styleID}{s.categoryName ? ` · ${s.categoryName}` : ''}</div>
-                  </div>
-                  <div style={{ marginLeft: 'auto', color: '#C41C1C', fontSize: 18 }}>›</div>
+          {!selStyle && <>
+            {loading && <div style={{ padding: 24, textAlign: 'center', color: '#6b7280' }}>Searching…</div>}
+            {!loading && !query && <div style={{ padding: 24, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>Type a style number or brand above to search.</div>}
+            {!loading && styleList.map(s => (
+              <div key={s.styleID} onClick={() => loadColors(s)}
+                style={{ padding: '11px 20px', borderBottom: '1px solid #f5f5f5', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}
+                onMouseOver={e => e.currentTarget.style.background = '#f9fafb'}
+                onMouseOut={e => e.currentTarget.style.background = '#fff'}>
+                {s.styleImage && <img src={s.styleImage} style={{ width: 44, height: 44, objectFit: 'contain', borderRadius: 4, border: '1px solid #e5e7eb', flexShrink: 0 }} alt="" onError={e => e.target.style.display='none'} />}
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{s.brandName} {s.title || s.styleID}</div>
+                  <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{s.styleID}{s.categoryName ? ` · ${s.categoryName}` : ''}</div>
                 </div>
-              ))}
-            </>
-          )}
+                <div style={{ marginLeft: 'auto', color: '#C41C1C', fontSize: 18 }}>›</div>
+              </div>
+            ))}
+          </>}
 
-          {/* Color / price list */}
-          {selStyle && (
-            <>
-              {loadingProds && <div style={{ padding: 24, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>Loading colors &amp; pricing…</div>}
-              {!loadingProds && colorGroups.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>No inventory data available.</div>}
-              {!loadingProds && colorGroups.map(cg => {
-                const prices = cg.prices.sort((a, b) => a.price - b.price);
-                const basePrice = prices[0]?.price || 0;
-                const maxPrice  = prices[prices.length - 1]?.price || 0;
-                const inStock   = cg.totalQty > 0;
-                return (
-                  <div key={cg.colorName} onClick={() => inStock && handleColorSelect(cg)}
-                    style={{ padding: '10px 20px', borderBottom: '1px solid #f5f5f5', cursor: inStock ? 'pointer' : 'default', opacity: inStock ? 1 : 0.45, display: 'flex', alignItems: 'center', gap: 12 }}
-                    onMouseOver={e => { if (inStock) e.currentTarget.style.background = '#f9fafb'; }}
-                    onMouseOut={e => e.currentTarget.style.background = '#fff'}>
-                    {cg.image && <img src={cg.image} style={{ width: 44, height: 44, objectFit: 'contain', borderRadius: 4, border: '1px solid #e5e7eb', flexShrink: 0 }} alt="" onError={e => e.target.style.display='none'} />}
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 700, fontSize: 13, color: '#1A1A1A' }}>{cg.colorName}</div>
-                      <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
-                        {prices.map(p => `${p.sizeName}: $${p.price.toFixed(2)}`).join(' · ')}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <div style={{ fontWeight: 800, fontSize: 14, color: '#C41C1C' }}>${basePrice.toFixed(2)}{maxPrice > basePrice ? `–$${maxPrice.toFixed(2)}` : ''}</div>
-                      <div style={{ fontSize: 10, color: inStock ? '#16a34a' : '#ef4444', fontWeight: 600 }}>{inStock ? `${cg.totalQty.toLocaleString()} in stock` : 'Out of stock'}</div>
+          {/* Color list */}
+          {selStyle && <>
+            {loadingProds && <div style={{ padding: 24, textAlign: 'center', color: '#6b7280' }}>Loading colors &amp; pricing…</div>}
+            {!loadingProds && colorGroups.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: '#9ca3af' }}>No inventory data available.</div>}
+            {!loadingProds && colorGroups.map(cg => {
+              const sorted = cg.prices.sort((a, b) => a.price - b.price);
+              const base = sorted[0]?.price || 0, max = sorted[sorted.length-1]?.price || 0;
+              const inStock = cg.totalQty > 0;
+              return (
+                <div key={cg.colorName} onClick={() => inStock && handleColorSelect(cg)}
+                  style={{ padding: '10px 20px', borderBottom: '1px solid #f5f5f5', cursor: inStock ? 'pointer' : 'default', opacity: inStock ? 1 : 0.45, display: 'flex', alignItems: 'center', gap: 12 }}
+                  onMouseOver={e => { if (inStock) e.currentTarget.style.background = '#f9fafb'; }}
+                  onMouseOut={e => e.currentTarget.style.background = '#fff'}>
+                  {cg.image && <img src={cg.image} style={{ width: 44, height: 44, objectFit: 'contain', borderRadius: 4, border: '1px solid #e5e7eb', flexShrink: 0 }} alt="" onError={e => e.target.style.display='none'} />}
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>{cg.colorName}</div>
+                    <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+                      {sorted.map(p => `${p.sizeName}: $${p.price.toFixed(2)}`).join(' · ')}
                     </div>
                   </div>
-                );
-              })}
-            </>
-          )}
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontWeight: 800, fontSize: 14, color: '#C41C1C' }}>${base.toFixed(2)}{max > base ? `–$${max.toFixed(2)}` : ''}</div>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: inStock ? '#16a34a' : '#ef4444' }}>{inStock ? `${cg.totalQty.toLocaleString()} in stock` : 'Out of stock'}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </>}
         </div>
       </div>
     </div>
@@ -584,15 +574,55 @@ function SSSearchModal({ onClose, onSelect }) {
 }
 
 function ItemCard({ item, index, calc, isFreeShipping, onChange, onRemove, canRemove }) {
-  const [ssOpen, setSsOpen] = React.useState(false);
+  const [ssOpen, setSsOpen]           = React.useState(false);
+  const [ssInitStyle, setSsInitStyle] = React.useState(null);
+  const [ssInitProds, setSsInitProds] = React.useState(null);
+  const [suggestions, setSuggestions] = React.useState([]);
+  const [ssSearching, setSSSearching] = React.useState(false);
+  const timerRef = React.useRef(null);
+
   const set = (field) => (e) => onChange(item.id, field, e.target.value);
   const setNumber = (field, options) => (e) => onChange(item.id, field, sanitizeNumberInput(e.target.value, options));
+
   const handleSSSelect = ({ name, garmentPrice, garmentType, label }) => {
-    if (name && !item.name) onChange(item.id, 'name', name);
+    onChange(item.id, 'name', name);
     onChange(item.id, 'garmentPrice', garmentPrice);
     onChange(item.id, 'garmentType', garmentType || item.garmentType);
     onChange(item.id, '_ssLabel', label || name);
-    setSsOpen(false);
+    setSsOpen(false); setSsInitStyle(null); setSsInitProds(null);
+  };
+
+  const handleNameInput = (e) => {
+    const val = e.target.value;
+    onChange(item.id, 'name', val);
+    clearTimeout(timerRef.current);
+    if (val.trim().length < 2) { setSuggestions([]); return; }
+    timerRef.current = setTimeout(async () => {
+      setSSSearching(true);
+      try {
+        const r = await fetch(`/api/ss?path=search&q=${encodeURIComponent(val.trim())}`);
+        const data = await r.json();
+        if (data.type === 'direct') {
+          // Open modal straight to color picker
+          setSuggestions([]);
+          setSsInitStyle(data.styleInfo);
+          setSsInitProds(data.products || []);
+          setSsOpen(true);
+        } else if (data.type === 'styles' && data.results?.length) {
+          setSuggestions(data.results.slice(0, 8));
+        } else {
+          setSuggestions([]);
+        }
+      } catch(e) { setSuggestions([]); }
+      setSSSearching(false);
+    }, 480);
+  };
+
+  const pickSuggestion = (style) => {
+    setSuggestions([]);
+    setSsInitStyle(style);
+    setSsInitProds(null);
+    setSsOpen(true);
   };
 
   const decLabel = {
@@ -603,20 +633,45 @@ function ItemCard({ item, index, calc, isFreeShipping, onChange, onRemove, canRe
 
   return (
     <div className="item-card bg-white rounded-xl shadow-sm p-5 mb-4">
-      {ssOpen && <SSSearchModal onClose={() => setSsOpen(false)} onSelect={handleSSSelect} />}
+      {ssOpen && <SSSearchModal onClose={() => { setSsOpen(false); setSsInitStyle(null); setSsInitProds(null); }} onSelect={handleSSSelect} initialStyle={ssInitStyle} initialProducts={ssInitProds} />}
       {/* row 1 — item header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3 flex-1">
           <span className="bg-brand-red text-white text-xs font-bold px-2 py-1 rounded">
             ITEM {index + 1}
           </span>
-          <input
-            className="num-input flex-1"
-            style={{ maxWidth: 280 }}
-            placeholder="Item name / description (e.g. Pullover Hoodie)"
-            value={item.name}
-            onChange={set('name')}
-          />
+          <div style={{ position: 'relative', flex: 1, maxWidth: 340 }}>
+            <input
+              className="num-input"
+              style={{ width: '100%', paddingRight: ssSearching ? 80 : 12 }}
+              placeholder="Type garment name to search S&S catalog…"
+              value={item.name}
+              onChange={handleNameInput}
+              onBlur={() => setTimeout(() => setSuggestions([]), 200)}
+              autoComplete="off"
+            />
+            {ssSearching && <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: '#9ca3af', pointerEvents: 'none' }}>Searching…</span>}
+            {suggestions.length > 0 && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 7, boxShadow: '0 6px 18px rgba(0,0,0,0.12)', zIndex: 300, maxHeight: 220, overflowY: 'auto' }}>
+                {suggestions.map(s => (
+                  <div key={s.styleID} onMouseDown={() => pickSuggestion(s)}
+                    style={{ padding: '9px 13px', cursor: 'pointer', borderBottom: '1px solid #f5f5f5', display: 'flex', alignItems: 'center', gap: 10 }}
+                    onMouseOver={e => e.currentTarget.style.background = '#f9fafb'}
+                    onMouseOut={e => e.currentTarget.style.background = '#fff'}>
+                    {s.styleImage && <img src={s.styleImage} style={{ width: 34, height: 34, objectFit: 'contain', borderRadius: 3, border: '1px solid #e5e7eb', flexShrink: 0 }} alt="" onError={e => e.target.style.display='none'} />}
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: '#1A1A1A' }}>{s.brandName} {s.title || s.styleID}</div>
+                      <div style={{ fontSize: 11, color: '#9ca3af' }}>{s.styleID}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <button type="button" onClick={() => { setSsInitStyle(null); setSsInitProds(null); setSsOpen(true); }}
+            style={{ fontSize: 11, fontWeight: 700, color: '#C41C1C', background: '#fff0f0', border: '1px solid #C41C1C', borderRadius: 5, padding: '4px 9px', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
+            Browse S&amp;S
+          </button>
         </div>
         {canRemove && (
           <button
@@ -637,17 +692,11 @@ function ItemCard({ item, index, calc, isFreeShipping, onChange, onRemove, canRe
 
         {/* garment price */}
         <div>
-          <div className="label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span>Garment Price / Unit ($)</span>
-            <button type="button" onClick={() => setSsOpen(true)}
-              style={{ fontSize: 11, fontWeight: 700, color: '#C41C1C', background: '#fff0f0', border: '1px solid #C41C1C', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              🔍 S&amp;S Catalog
-            </button>
-          </div>
+          <div className="label">Garment Price / Unit ($)</div>
           <input type="number" min="0" step="0.01" className="num-input"
             placeholder="0.00" value={item.garmentPrice} onChange={setNumber('garmentPrice', { min: 0 })} />
           <div className="text-xs mt-1" style={{ color: item._ssLabel ? '#16a34a' : '#9ca3af' }}>
-            {item._ssLabel ? `✓ ${item._ssLabel}` : 'Search S&S or enter price manually'}
+            {item._ssLabel ? `✓ ${item._ssLabel}` : 'Auto-filled when you pick from S&S'}
           </div>
         </div>
 
