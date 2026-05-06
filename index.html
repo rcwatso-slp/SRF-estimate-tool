@@ -606,7 +606,171 @@ function buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimate
   </div>`;
 }
 
-// ── Summary Panel ─────────────────────────────────────────────────────────────
+//
+// ── Internal PDF Builder ──────────────────────────────────────────────────────
+function buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, estimateDate, notes,
+  discountAmount, discountedTotal, discountType, discountValue, marginPct, multiplier, effectiveMargin) {
+
+  const decLabels = { screen_transfer: 'Screen Printed Transfer', ucm: 'UCM Transfer', patch: 'Heat-Applied Patch' };
+  const safeClientName     = escapeHtml(clientName);
+  const safeEstimateNumber = escapeHtml(estimateNumber);
+  const safeEstimateDate   = escapeHtml(estimateDate);
+  const safeNotes          = escapeHtml(notes).replace(/\n/g, '<br>');
+  const safeDiscountValue  = fmt(percentNum(discountValue), 0);
+  const hasDiscount        = discountAmount > 0;
+  const finalTotal         = hasDiscount ? discountedTotal : totals.totalSell;
+  const totalProfit        = finalTotal - totals.totalCost;
+  const profColor          = v => v >= 0 ? '#16a34a' : '#ef4444';
+  const marginNum          = marginNumFrom(marginPct);
+  const displayMargin      = hasDiscount ? effectiveMargin : marginNum;
+
+  const itemSections = items.map((item, i) => {
+    const c        = calcs[i];
+    const qty      = qtyNum(item.quantity);
+    const name     = escapeHtml(item.name || ('Item ' + (i + 1)));
+    const decLabel = escapeHtml(decLabels[item.decorationType] || 'Decoration');
+    const gtLabel  = escapeHtml((GARMENT_TYPES.find(g => g.value === item.garmentType) || {}).label || 'T-Shirt');
+    const itemProfit  = c.totalSell - c.totalCost;
+    const itemMarginPct = c.totalSell > 0 ? (itemProfit / c.totalSell * 100) : 0;
+
+    const costRow = (label, costUnit, sellUnit) => {
+      const tc = costUnit * qty;
+      const ts = sellUnit * qty;
+      const tp = ts - tc;
+      return '<tr style="border-bottom:1px solid #f0f0f0">' +
+        '<td style="padding:5px 8px;font-size:11px;color:#374151">' + label + '</td>' +
+        '<td style="padding:5px 8px;text-align:right;font-size:11px;color:#374151">$' + fmt(costUnit) + '</td>' +
+        '<td style="padding:5px 8px;text-align:right;font-size:11px;color:#374151">$' + fmt(tc) + '</td>' +
+        '<td style="padding:5px 8px;text-align:right;font-size:11px;color:#555">$' + fmt(sellUnit) + '</td>' +
+        '<td style="padding:5px 8px;text-align:right;font-size:11px;color:#555">$' + fmt(ts) + '</td>' +
+        '<td style="padding:5px 8px;text-align:right;font-size:11px;font-weight:600;color:' + profColor(tp) + '">$' + fmt(tp) + '</td>' +
+        '</tr>';
+    };
+
+    const fp = item.frontPlacements || [];
+    const bp = item.backPlacements  || [];
+    const placementHtml = (fp.length || bp.length) ? (
+      '<div style="padding:8px 10px 10px;border-top:1px dashed #e5e7eb">' +
+      '<div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Design Placement</div>' +
+      '<div style="display:flex;gap:12px;align-items:flex-start">' +
+      (fp.length ? '<div style="text-align:center">' + buildGarmentSvgStr(item.garmentType || 'tee', 'front', fp, 90) + '<div style="font-size:10px;color:#555;margin-top:3px;font-weight:600">Front' + (fp.length > 1 ? ' (' + fp.length + ')' : '') + '</div></div>' : '') +
+      (bp.length ? '<div style="text-align:center">' + buildGarmentSvgStr(item.garmentType || 'tee', 'back',  bp, 90) + '<div style="font-size:10px;color:#555;margin-top:3px;font-weight:600">Back'  + (bp.length > 1 ? ' (' + bp.length + ')' : '') + '</div></div>' : '') +
+      '</div></div>'
+    ) : '';
+
+    return (
+      '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:12px;page-break-inside:avoid;overflow:hidden">' +
+      '<div style="background:#1A1A1A;padding:8px 14px;display:flex;align-items:center;justify-content:space-between">' +
+        '<div style="color:#fff;font-size:13px;font-weight:800">' + name + '</div>' +
+        '<div style="color:#aaa;font-size:11px">' + gtLabel + ' &nbsp;&middot;&nbsp; Qty: ' + qty + ' &nbsp;&middot;&nbsp; ' + decLabel + '</div>' +
+      '</div>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+        '<thead><tr style="background:#f9fafb">' +
+          '<th style="padding:5px 8px;text-align:left;font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase">Component</th>' +
+          '<th style="padding:5px 8px;text-align:right;font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase">Cost/Unit</th>' +
+          '<th style="padding:5px 8px;text-align:right;font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase">Total Cost</th>' +
+          '<th style="padding:5px 8px;text-align:right;font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase">Sell/Unit</th>' +
+          '<th style="padding:5px 8px;text-align:right;font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase">Revenue</th>' +
+          '<th style="padding:5px 8px;text-align:right;font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase">Profit</th>' +
+        '</tr></thead>' +
+        '<tbody>' +
+          costRow('Garments (S&amp;S Activewear)', c.gPrice, c.gPrice * c.margin) +
+          costRow('Decoration incl. flat shipping', c.decCostPerUnit, c.decCostPerUnit * c.margin) +
+          (c.shipPerUnit > 0.001 ? costRow('S&amp;S Supplier Shipping', c.shipPerUnit, c.shipPerUnit * c.margin) : '') +
+        '</tbody>' +
+        '<tfoot>' +
+          '<tr style="background:#f9fafb;border-top:2px solid #e5e7eb">' +
+            '<td style="padding:7px 8px;font-size:12px;font-weight:800;color:#1A1A1A">TOTAL</td>' +
+            '<td style="padding:7px 8px;text-align:right;font-size:12px;font-weight:700;color:#374151">$' + fmt(c.totalCostPerUnit) + '</td>' +
+            '<td style="padding:7px 8px;text-align:right;font-size:12px;font-weight:700;color:#374151">$' + fmt(c.totalCost) + '</td>' +
+            '<td style="padding:7px 8px;text-align:right;font-size:12px;font-weight:800;color:#C41C1C">$' + fmt(c.sellPerUnit) + '</td>' +
+            '<td style="padding:7px 8px;text-align:right;font-size:12px;font-weight:800;color:#C41C1C">$' + fmt(c.totalSell) + '</td>' +
+            '<td style="padding:7px 8px;text-align:right;font-size:13px;font-weight:800;color:' + profColor(itemProfit) + '">$' + fmt(itemProfit) + '</td>' +
+          '</tr>' +
+          '<tr style="background:#f9fafb">' +
+            '<td colspan="6" style="padding:3px 8px 7px;font-size:10px;color:#9ca3af">' +
+              'Item margin: ' + fmt(itemMarginPct, 1) + '% &nbsp;&middot;&nbsp; Multiplier &times;' + fmt(c.margin, 3) +
+            '</td>' +
+          '</tr>' +
+        '</tfoot>' +
+      '</table>' +
+      placementHtml +
+      '</div>'
+    );
+  }).join('');
+
+  const discountLabel = discountType === 'percent'
+    ? 'Discount (' + safeDiscountValue + '% off)' : 'Discount';
+
+  return (
+    '<div style="font-family:Arial,Helvetica,sans-serif;max-width:760px;margin:0 auto;padding:0;color:#1A1A1A;background:#fff">' +
+
+    '<div style="background:#1A1A1A;padding:20px 28px;display:flex;align-items:center;justify-content:space-between;border-radius:8px 8px 0 0;gap:18px">' +
+      '<div style="background:#fff;border-radius:6px;padding:6px 10px;display:inline-flex;align-items:center;flex:0 0 auto">' +
+        '<img src="data:image/png;base64,' + LOGO_B64 + '" style="height:54px;max-width:170px;object-fit:contain" alt="SRF Logo" />' +
+      '</div>' +
+      '<div style="text-align:right;min-width:0">' +
+        '<div style="color:#ef4444;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;background:rgba(239,68,68,0.18);padding:3px 10px;border-radius:4px;display:inline-block">INTERNAL USE ONLY</div>' +
+        '<div style="color:#fff;font-size:22px;font-weight:800;margin-top:4px">WORK ORDER RECORD</div>' +
+        (estimateNumber ? '<div style="color:#aaa;font-size:12px">Estimate No. ' + safeEstimateNumber + '</div>' : '') +
+        '<div style="color:#aaa;font-size:12px">' + safeEstimateDate + '</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div style="background:#C41C1C;padding:10px 28px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">' +
+      '<span style="color:#fff;font-size:14px;font-weight:700">' + (clientName ? 'Client: ' + safeClientName : 'SRF Screen Printing &amp; Apparel') + '</span>' +
+      '<span style="color:rgba(255,255,255,0.85);font-size:12px">Target margin: ' + fmt(marginNum, 1) + '% &nbsp;(&times;' + fmt(multiplier, 3) + ')</span>' +
+    '</div>' +
+
+    '<div style="padding:16px 18px">' +
+      '<div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">' +
+        items.length + ' item type' + (items.length > 1 ? 's' : '') + ' &nbsp;&middot;&nbsp; ' + totals.totalQty + ' total units' +
+      '</div>' +
+      itemSections +
+    '</div>' +
+
+    '<div style="background:#f9fafb;padding:16px 28px;border-top:2px solid #C41C1C;page-break-inside:avoid">' +
+      '<div style="font-size:12px;font-weight:700;color:#C41C1C;text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px">Order Totals</div>' +
+      '<div style="display:flex;gap:20px;flex-wrap:wrap">' +
+        '<div style="flex:1;min-width:170px">' +
+          '<div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:5px">Cost</div>' +
+          '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #e5e7eb"><span style="color:#555">All items (cost)</span><span style="font-weight:600">$' + fmt(totals.totalCost) + '</span></div>' +
+          '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #e5e7eb"><span style="color:#555">S&amp;S Shipping</span>' +
+            (totals.supplierShipping === 0 ? '<span style="font-weight:600;color:#16a34a">FREE</span>' : '<span style="font-weight:600">$' + fmt(totals.supplierShipping) + '</span>') +
+          '</div>' +
+          '<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:14px"><span style="font-weight:700">Total Cost</span><span style="font-weight:800">$' + fmt(totals.totalCost) + '</span></div>' +
+        '</div>' +
+        '<div style="flex:1;min-width:170px">' +
+          '<div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:5px">Revenue</div>' +
+          '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #e5e7eb"><span style="color:#555">Subtotal</span><span style="font-weight:600">$' + fmt(totals.totalSell) + '</span></div>' +
+          (hasDiscount ? '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #e5e7eb;color:#16a34a"><span>' + discountLabel + '</span><span style="font-weight:600">-$' + fmt(discountAmount) + '</span></div>' : '') +
+          '<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:14px"><span style="font-weight:700">Net Revenue</span><span style="font-weight:800;color:#C41C1C">$' + fmt(finalTotal) + '</span></div>' +
+        '</div>' +
+        '<div style="flex:1;min-width:170px">' +
+          '<div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:5px">Profit</div>' +
+          '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #e5e7eb"><span style="color:#555">Gross Profit</span><span style="font-weight:700;color:' + profColor(totalProfit) + '">$' + fmt(totalProfit) + '</span></div>' +
+          '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #e5e7eb"><span style="color:#555">Effective Margin</span><span style="font-weight:700;color:' + (displayMargin < 30 ? '#ef4444' : displayMargin < 40 ? '#f97316' : '#16a34a') + '">' + fmt(displayMargin, 1) + '%</span></div>' +
+          '<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:14px"><span style="font-weight:700">Profit / Unit</span><span style="font-weight:800;color:' + profColor(totalProfit) + '">$' + fmt(totals.totalQty > 0 ? totalProfit / totals.totalQty : 0) + '</span></div>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    (notes ?
+      '<div style="background:#fff;padding:15px 28px;border-top:1px solid #e5e7eb;page-break-inside:avoid">' +
+        '<div style="font-size:12px;font-weight:700;color:#C41C1C;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Notes</div>' +
+        '<div style="font-size:12px;color:#555;line-height:1.55;word-break:break-word">' + safeNotes + '</div>' +
+      '</div>' : '') +
+
+    '<div style="background:#1A1A1A;padding:12px 28px;border-radius:0 0 8px 8px;display:flex;justify-content:space-between;align-items:center">' +
+      '<span style="color:#666;font-size:11px">SRF Screen Printing &amp; Apparel Decorating</span>' +
+      '<span style="color:#ef4444;font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase">Internal Use Only &mdash; Do Not Share</span>' +
+    '</div>' +
+
+    '</div>'
+  );
+}
+
+ ── Summary Panel ─────────────────────────────────────────────────────────────
 function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estimateNumber, estimateDate, notes,
   discountType, discountValue, setDiscountType, setDiscountValue, discountAmount, discountedTotal, effectiveMargin,
   marginPct, setMarginPct, multiplier }) {
@@ -632,6 +796,26 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
     // Pass HTML string directly — html2pdf creates its own off-screen container,
     // avoiding the show/hide reflow timing bug.
     html2pdf().set(opt).from(html).save();
+  };
+
+  const exportInternalPdf = () => {
+    const iHtml = buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, estimateDate, notes,
+      discountAmount, discountedTotal, discountType, discountValue, marginPct, multiplier, effectiveMargin);
+
+    const iFileName = [
+      'SRF-Internal',
+      estimateNumber ? `No${safeFilePart(estimateNumber)}` : '',
+      clientName ? safeFilePart(clientName) : '',
+      safeFilePart(estimateDate),
+    ].filter(Boolean).join('_') + '.pdf';
+
+    html2pdf().set({
+      margin: [10, 10, 10, 10],
+      filename: iFileName,
+      image: { type: 'jpeg', quality: 0.97 },
+      html2canvas: { scale: 2, useCORS: true, allowTaint: true, logging: false },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    }).from(iHtml).save();
   };
 
   return (
@@ -743,10 +927,20 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
         onMouseOver={e => e.currentTarget.style.background = '#a31717'}
         onMouseOut={e => e.currentTarget.style.background = '#C41C1C'}
       >
-        Export PDF Estimate
+        Export Client Estimate
       </button>
 
-      <p className="text-xs text-gray-400 mt-2 text-center">Margin info hidden from client PDF</p>
+      <button
+        onClick={exportInternalPdf}
+        className="w-full mt-2 py-2.5 px-4 rounded-lg font-bold text-sm uppercase tracking-wide transition-colors"
+        style={{ background: '#1A1A1A', color: '#fff' }}
+        onMouseOver={e => e.currentTarget.style.background = '#333'}
+        onMouseOut={e => e.currentTarget.style.background = '#1A1A1A'}
+      >
+        Export Internal Record
+      </button>
+
+      <p className="text-xs text-gray-400 mt-2 text-center">Client PDF hides cost &amp; margin &middot; Internal includes all data</p>
     </div>
   );
 }
