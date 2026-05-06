@@ -650,10 +650,10 @@ function buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, 
       <tr style="background:#fafafa;border-bottom:3px solid #e5e7eb">
         <td colspan="6" style="padding:6px 10px 10px">
           <div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px">Design Placement</div>
-          <div style="display:flex;gap:12px;align-items:flex-start">
-            ${fp.length ? `<div style="text-align:center">${buildGarmentSvgStr(item.garmentType||'tee','front',fp,80)}<div style="font-size:10px;color:#555;margin-top:3px;font-weight:600">Front${fp.length>1?' ('+fp.length+')':''}</div></div>` : ''}
-            ${bp.length ? `<div style="text-align:center">${buildGarmentSvgStr(item.garmentType||'tee','back', bp,80)}<div style="font-size:10px;color:#555;margin-top:3px;font-weight:600">Back${bp.length>1?' ('+bp.length+')':''}</div></div>`  : ''}
-          </div>
+          <table style="border-collapse:collapse"><tr>
+            ${fp.length ? `<td style="padding:0 10px 0 0;vertical-align:top;text-align:center">${buildGarmentSvgStr(item.garmentType||'tee','front',fp,80)}<div style="font-size:10px;color:#555;margin-top:3px;font-weight:600">Front${fp.length>1?' ('+fp.length+')':''}</div></td>` : ''}
+            ${bp.length ? `<td style="padding:0;vertical-align:top;text-align:center">${buildGarmentSvgStr(item.garmentType||'tee','back',bp,80)}<div style="font-size:10px;color:#555;margin-top:3px;font-weight:600">Back${bp.length>1?' ('+bp.length+')':''}</div></td>` : ''}
+          </tr></table>
         </td>
       </tr>` : '';
 
@@ -686,25 +686,39 @@ function buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, 
   const discountLabel = discountType === 'percent'
     ? `Discount (${safeDiscountValue}% off)` : 'Discount';
 
+  const marginColor = displayMargin < 30 ? '#ef4444' : displayMargin < 40 ? '#f97316' : '#16a34a';
+
   return `
   <div style="font-family:Arial,Helvetica,sans-serif;max-width:760px;margin:0 auto;padding:0;color:#1A1A1A;background:#fff">
 
-    <div style="background:#1A1A1A;padding:20px 28px;display:flex;align-items:center;justify-content:space-between;border-radius:8px 8px 0 0;gap:18px">
-      <div style="background:#fff;border-radius:6px;padding:6px 10px;display:inline-flex;align-items:center;flex:0 0 auto">
-        <img src="data:image/png;base64,${LOGO_B64}" style="height:54px;max-width:170px;object-fit:contain" alt="SRF Logo" />
-      </div>
-      <div style="text-align:right;min-width:0">
-        <div style="color:#ef4444;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;background:rgba(239,68,68,0.18);padding:3px 10px;border-radius:4px;display:inline-block">INTERNAL USE ONLY</div>
-        <div style="color:#fff;font-size:22px;font-weight:800;margin-top:4px">WORK ORDER RECORD</div>
-        ${estimateNumber ? `<div style="color:#aaa;font-size:12px">Estimate No. ${safeEstimateNumber}</div>` : ''}
-        <div style="color:#aaa;font-size:12px">${safeEstimateDate}</div>
-      </div>
-    </div>
+    <table style="width:100%;border-collapse:collapse;background:#1A1A1A">
+      <tr>
+        <td style="padding:20px 28px;vertical-align:middle;width:50%">
+          <table style="border-collapse:collapse;background:#fff"><tr>
+            <td style="padding:6px 10px;vertical-align:middle">
+              <img src="data:image/png;base64,${LOGO_B64}" style="height:54px;max-width:170px;display:block" alt="SRF Logo" />
+            </td>
+          </tr></table>
+        </td>
+        <td style="padding:20px 28px;vertical-align:middle;text-align:right;width:50%">
+          <div style="color:#ef4444;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;background:#3a1010;padding:3px 10px;display:inline-block">INTERNAL USE ONLY</div>
+          <div style="color:#fff;font-size:22px;font-weight:800;margin-top:4px">WORK ORDER RECORD</div>
+          ${estimateNumber ? `<div style="color:#aaa;font-size:12px">Estimate No. ${safeEstimateNumber}</div>` : ''}
+          <div style="color:#aaa;font-size:12px">${safeEstimateDate}</div>
+        </td>
+      </tr>
+    </table>
 
-    <div style="background:#C41C1C;padding:10px 28px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-      <span style="color:#fff;font-size:14px;font-weight:700">${clientName ? `Client: ${safeClientName}` : 'SRF Screen Printing &amp; Apparel'}</span>
-      <span style="color:rgba(255,255,255,0.85);font-size:12px">Target margin: ${fmt(marginNum,1)}% &nbsp;(&times;${fmt(multiplier,3)})</span>
-    </div>
+    <table style="width:100%;border-collapse:collapse;background:#C41C1C">
+      <tr>
+        <td style="padding:10px 28px;vertical-align:middle">
+          <span style="color:#fff;font-size:14px;font-weight:700">${clientName ? `Client: ${safeClientName}` : 'SRF Screen Printing &amp; Apparel'}</span>
+        </td>
+        <td style="padding:10px 28px;vertical-align:middle;text-align:right">
+          <span style="color:rgba(255,255,255,0.85);font-size:12px">Target margin: ${fmt(marginNum,1)}% &nbsp;(&times;${fmt(multiplier,3)})</span>
+        </td>
+      </tr>
+    </table>
 
     <div style="background:#fff;padding:0 0 8px">
       <table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed">
@@ -728,26 +742,34 @@ function buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, 
 
     <div style="background:#f9f9f9;padding:16px 28px;border-top:2px solid #C41C1C">
       <div style="font-size:12px;font-weight:700;color:#C41C1C;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Order Totals</div>
-      <div style="display:flex;gap:20px;flex-wrap:wrap">
-        <div style="flex:1;min-width:150px">
-          <div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:5px">Cost</div>
-          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #e5e7eb"><span style="color:#555">All items</span><span style="font-weight:600">$${fmt(totals.totalCost)}</span></div>
-          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #e5e7eb"><span style="color:#555">S&amp;S Shipping</span>${totals.supplierShipping === 0 ? '<span style="font-weight:600;color:#16a34a">FREE</span>' : `<span style="font-weight:600">$${fmt(totals.supplierShipping)}</span>`}</div>
-          <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:14px"><span style="font-weight:700">Total Cost</span><span style="font-weight:800">$${fmt(totals.totalCost)}</span></div>
-        </div>
-        <div style="flex:1;min-width:150px">
-          <div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:5px">Revenue</div>
-          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #e5e7eb"><span style="color:#555">Subtotal</span><span style="font-weight:600">$${fmt(totals.totalSell)}</span></div>
-          ${hasDiscount ? `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #e5e7eb;color:#16a34a"><span>${discountLabel}</span><span style="font-weight:600">-$${fmt(discountAmount)}</span></div>` : ''}
-          <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:14px"><span style="font-weight:700">Net Revenue</span><span style="font-weight:800;color:#C41C1C">$${fmt(finalTotal)}</span></div>
-        </div>
-        <div style="flex:1;min-width:150px">
-          <div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:5px">Profit</div>
-          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #e5e7eb"><span style="color:#555">Gross Profit</span><span style="font-weight:700;color:${pc(totalProfit)}">$${fmt(totalProfit)}</span></div>
-          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #e5e7eb"><span style="color:#555">Effective Margin</span><span style="font-weight:700;color:${displayMargin < 30 ? '#ef4444' : displayMargin < 40 ? '#f97316' : '#16a34a'}">${fmt(displayMargin,1)}%</span></div>
-          <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:14px"><span style="font-weight:700">Profit / Unit</span><span style="font-weight:800;color:${pc(totalProfit)}">$${fmt(totals.totalQty > 0 ? totalProfit / totals.totalQty : 0)}</span></div>
-        </div>
-      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <tr>
+          <td style="vertical-align:top;padding:0 16px 0 0;width:33%">
+            <div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:5px">Cost</div>
+            <table style="width:100%;border-collapse:collapse">
+              <tr><td style="padding:4px 0;font-size:13px;color:#555;border-bottom:1px solid #e5e7eb">All items</td><td style="padding:4px 0;font-size:13px;font-weight:600;text-align:right;border-bottom:1px solid #e5e7eb">$${fmt(totals.totalCost)}</td></tr>
+              <tr><td style="padding:4px 0;font-size:13px;color:#555;border-bottom:1px solid #e5e7eb">S&amp;S Shipping</td><td style="padding:4px 0;font-size:13px;font-weight:600;text-align:right;border-bottom:1px solid #e5e7eb">${totals.supplierShipping === 0 ? '<span style="color:#16a34a">FREE</span>' : `$${fmt(totals.supplierShipping)}`}</td></tr>
+              <tr><td style="padding:6px 0;font-size:14px;font-weight:700">Total Cost</td><td style="padding:6px 0;font-size:14px;font-weight:800;text-align:right">$${fmt(totals.totalCost)}</td></tr>
+            </table>
+          </td>
+          <td style="vertical-align:top;padding:0 16px 0 0;width:33%">
+            <div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:5px">Revenue</div>
+            <table style="width:100%;border-collapse:collapse">
+              <tr><td style="padding:4px 0;font-size:13px;color:#555;border-bottom:1px solid #e5e7eb">Subtotal</td><td style="padding:4px 0;font-size:13px;font-weight:600;text-align:right;border-bottom:1px solid #e5e7eb">$${fmt(totals.totalSell)}</td></tr>
+              ${hasDiscount ? `<tr style="color:#16a34a"><td style="padding:4px 0;font-size:13px;border-bottom:1px solid #e5e7eb">${discountLabel}</td><td style="padding:4px 0;font-size:13px;font-weight:600;text-align:right;border-bottom:1px solid #e5e7eb">-$${fmt(discountAmount)}</td></tr>` : ''}
+              <tr><td style="padding:6px 0;font-size:14px;font-weight:700">Net Revenue</td><td style="padding:6px 0;font-size:14px;font-weight:800;text-align:right;color:#C41C1C">$${fmt(finalTotal)}</td></tr>
+            </table>
+          </td>
+          <td style="vertical-align:top;padding:0;width:33%">
+            <div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:5px">Profit</div>
+            <table style="width:100%;border-collapse:collapse">
+              <tr><td style="padding:4px 0;font-size:13px;color:#555;border-bottom:1px solid #e5e7eb">Gross Profit</td><td style="padding:4px 0;font-size:13px;font-weight:700;text-align:right;border-bottom:1px solid #e5e7eb;color:${pc(totalProfit)}">$${fmt(totalProfit)}</td></tr>
+              <tr><td style="padding:4px 0;font-size:13px;color:#555;border-bottom:1px solid #e5e7eb">Effective Margin</td><td style="padding:4px 0;font-size:13px;font-weight:700;text-align:right;border-bottom:1px solid #e5e7eb;color:${marginColor}">${fmt(displayMargin,1)}%</td></tr>
+              <tr><td style="padding:6px 0;font-size:14px;font-weight:700">Profit / Unit</td><td style="padding:6px 0;font-size:14px;font-weight:800;text-align:right;color:${pc(totalProfit)}">$${fmt(totals.totalQty > 0 ? totalProfit / totals.totalQty : 0)}</td></tr>
+            </table>
+          </td>
+        </tr>
+      </table>
     </div>
 
     ${notes ? `
@@ -756,10 +778,12 @@ function buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, 
       <div style="font-size:12px;color:#555;line-height:1.55;word-break:break-word">${safeNotes}</div>
     </div>` : ''}
 
-    <div style="background:#1A1A1A;padding:12px 28px;border-radius:0 0 8px 8px;display:flex;justify-content:space-between;align-items:center">
-      <span style="color:#666;font-size:11px">SRF Screen Printing &amp; Apparel Decorating</span>
-      <span style="color:#ef4444;font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase">Internal Use Only &mdash; Do Not Share</span>
-    </div>
+    <table style="width:100%;border-collapse:collapse;background:#1A1A1A">
+      <tr>
+        <td style="padding:12px 28px;font-size:11px;color:#666">SRF Screen Printing &amp; Apparel Decorating</td>
+        <td style="padding:12px 28px;font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#ef4444;text-align:right">Internal Use Only &mdash; Do Not Share</td>
+      </tr>
+    </table>
   </div>`;
 }
 
