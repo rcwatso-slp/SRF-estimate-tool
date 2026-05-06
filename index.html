@@ -108,6 +108,24 @@ const safeFilePart = (value) => String(value || '')
   .replace(/[^a-z0-9_\-]+/gi, '-')
   .replace(/^-+|-+$/g, '');
 
+// helpers for size-breakdown items
+function itemQty(item) {
+  if (item.sizeBreakdown && item.sizeBreakdown.length > 0) {
+    const t = item.sizeBreakdown.reduce((s, r) => s + (parseInt(r.qty) || 0), 0);
+    return t > 0 ? t : qtyNum(item.quantity);
+  }
+  return qtyNum(item.quantity);
+}
+function itemGarmentCost(item) {
+  if (item.sizeBreakdown && item.sizeBreakdown.length > 0) {
+    const t = item.sizeBreakdown.reduce((s, r) => s + (parseInt(r.qty) || 0), 0);
+    if (t === 0) return moneyNum(item.garmentPrice);
+    const c = item.sizeBreakdown.reduce((s, r) => s + (parseFloat(r.price) || 0) * (parseInt(r.qty) || 0), 0);
+    return c / t;
+  }
+  return moneyNum(item.garmentPrice);
+}
+
 function createItem() {
   return {
     id: uid(),
@@ -119,20 +137,19 @@ function createItem() {
     garmentType: 'tee',
     frontPlacements: [],
     backPlacements: [],
+    sizeBreakdown: [],   // [{sizeID, sizeName, price, qty}]
   };
 }
 
 // ── per-item calculation ──────────────────────────────────────────────────────
-function calcItem(item, isFreeShipping, supplierShippingTotal, totalQty, multiplier) {
-  const qty      = qtyNum(item.quantity);
-  const gPrice   = moneyNum(item.garmentPrice);
-  const dPrice   = moneyNum(item.decorationPrice);
+function calcItem(item, isFreeShipping, supplierShippingTotal, totalQtyAll, multiplier) {
+  const qty    = itemQty(item);
+  const dPrice = moneyNum(item.decorationPrice);
 
   // decoration flat shipping
   const decFlat = item.decorationType === 'patch' ? 30 : 15;
 
   // decoration cost per unit (amortised)
-  // Transfers: dPrice is the total order price for this item; patches: dPrice is per-unit
   const decCostPerUnit = qty > 0
     ? item.decorationType === 'patch'
       ? (dPrice * qty + decFlat) / qty
@@ -140,27 +157,50 @@ function calcItem(item, isFreeShipping, supplierShippingTotal, totalQty, multipl
     : 0;
 
   // supplier shipping allocated to this item (total, not per-unit)
-  const itemShipTotal = isFreeShipping || totalQty === 0
+  const itemShipTotal = isFreeShipping || totalQtyAll === 0
     ? 0
-    : (supplierShippingTotal * qty) / totalQty;
-
+    : (supplierShippingTotal * qty) / totalQtyAll;
   const shipPerUnit = qty > 0 ? itemShipTotal / qty : 0;
 
-  const totalCostPerUnit = gPrice + decCostPerUnit + shipPerUnit;
-  const sellPerUnit      = totalCostPerUnit * multiplier;
-  const totalCost        = totalCostPerUnit * qty;
-  const totalSell        = sellPerUnit * qty;
+  // Size-breakdown path: compute per-size sell prices and accurate totals
+  const hasSizes = item.sizeBreakdown && item.sizeBreakdown.length > 0
+    && item.sizeBreakdown.some(r => (parseInt(r.qty) || 0) > 0);
+
+  let gPrice, totalCost, totalSell, sellPerUnit, sizeSells = [];
+
+  if (hasSizes) {
+    const activeRows = item.sizeBreakdown.filter(r => (parseInt(r.qty) || 0) > 0);
+    sizeSells = activeRows.map(r => ({
+      sizeID:      r.sizeID,
+      sizeName:    r.sizeName,
+      price:       parseFloat(r.price) || 0,
+      qty:         parseInt(r.qty) || 0,
+      sellPerUnit: ((parseFloat(r.price) || 0) + decCostPerUnit + shipPerUnit) * multiplier,
+    }));
+    totalCost = activeRows.reduce((s, r) =>
+      s + ((parseFloat(r.price) || 0) + decCostPerUnit + shipPerUnit) * (parseInt(r.qty) || 0), 0);
+    totalSell   = sizeSells.reduce((s, r) => s + r.sellPerUnit * r.qty, 0);
+    gPrice      = itemGarmentCost(item);
+    sellPerUnit = qty > 0 ? totalSell / qty : 0;
+  } else {
+    gPrice = moneyNum(item.garmentPrice);
+    const totalCostPerUnit = gPrice + decCostPerUnit + shipPerUnit;
+    sellPerUnit = totalCostPerUnit * multiplier;
+    totalCost   = totalCostPerUnit * qty;
+    totalSell   = sellPerUnit * qty;
+  }
 
   return {
     qty, gPrice, dPrice, decFlat,
     decCostPerUnit,
     shipPerUnit,
     itemShipTotal,
-    totalCostPerUnit,
+    totalCostPerUnit: qty > 0 ? (gPrice + decCostPerUnit + shipPerUnit) : 0,
     sellPerUnit,
     totalCost,
     totalSell,
     margin: multiplier,
+    sizeSells,
   };
 }
 
@@ -579,16 +619,31 @@ function ItemCard({ item, index, calc, isFreeShipping, onChange, onRemove, canRe
   const [ssInitProds, setSsInitProds] = React.useState(null);
   const [suggestions, setSuggestions] = React.useState([]);
   const [ssSearching, setSSSearching] = React.useState(false);
+  const [ssSearchError, setSSSearchError] = React.useState('');
   const timerRef = React.useRef(null);
 
   const set = (field) => (e) => onChange(item.id, field, e.target.value);
   const setNumber = (field, options) => (e) => onChange(item.id, field, sanitizeNumberInput(e.target.value, options));
 
-  const handleSSSelect = ({ name, garmentPrice, garmentType, label }) => {
+  const handleSSSelect = ({ name, garmentPrice, garmentType, label, prices }) => {
     onChange(item.id, 'name', name);
-    onChange(item.id, 'garmentPrice', garmentPrice);
     onChange(item.id, 'garmentType', garmentType || item.garmentType);
     onChange(item.id, '_ssLabel', label || name);
+    if (prices && prices.length > 0) {
+      // Build size breakdown table with qty=0 for each size, sorted cheapest first
+      const sorted = [...prices].sort((a, b) => a.price - b.price);
+      const breakdown = sorted.map(p => ({
+        sizeID:   p.sizeID   || p.sizeName,
+        sizeName: p.sizeName || p.sizeID,
+        price:    p.price    || 0,
+        qty:      0,
+      }));
+      onChange(item.id, 'sizeBreakdown', breakdown);
+      onChange(item.id, 'garmentPrice', (sorted[0]?.price || 0).toFixed(2));
+    } else {
+      onChange(item.id, 'garmentPrice', garmentPrice);
+      onChange(item.id, 'sizeBreakdown', []);
+    }
     setSsOpen(false); setSsInitStyle(null); setSsInitProds(null);
   };
 
@@ -596,24 +651,37 @@ function ItemCard({ item, index, calc, isFreeShipping, onChange, onRemove, canRe
     const val = e.target.value;
     onChange(item.id, 'name', val);
     clearTimeout(timerRef.current);
+    setSSSearchError('');
     if (val.trim().length < 2) { setSuggestions([]); return; }
     timerRef.current = setTimeout(async () => {
       setSSSearching(true);
       try {
         const r = await fetch(`/api/ss?path=search&q=${encodeURIComponent(val.trim())}`);
+        if (!r.ok) {
+          setSSSearchError(`S&S API error (${r.status}) — use Browse S&S`);
+          setSuggestions([]); setSSSearching(false); return;
+        }
         const data = await r.json();
+        if (data.error) {
+          setSSSearchError(data.error);
+          setSuggestions([]); setSSSearching(false); return;
+        }
         if (data.type === 'direct') {
-          // Open modal straight to color picker
-          setSuggestions([]);
+          setSuggestions([]); setSSSearchError('');
           setSsInitStyle(data.styleInfo);
           setSsInitProds(data.products || []);
           setSsOpen(true);
         } else if (data.type === 'styles' && data.results?.length) {
           setSuggestions(data.results.slice(0, 8));
+          setSSSearchError('');
         } else {
           setSuggestions([]);
+          setSSSearchError('No results — try a style # (e.g. 3001CVC, PC61) or click Browse S&S');
         }
-      } catch(e) { setSuggestions([]); }
+      } catch(err) {
+        setSuggestions([]);
+        setSSSearchError('Search unavailable — click Browse S&S to find products');
+      }
       setSSSearching(false);
     }, 480);
   };
@@ -667,6 +735,11 @@ function ItemCard({ item, index, calc, isFreeShipping, onChange, onRemove, canRe
                 ))}
               </div>
             )}
+            {ssSearchError && !suggestions.length && !ssSearching && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff8f8', border: '1px solid #fca5a5', borderRadius: 7, padding: '8px 13px', fontSize: 11, color: '#b91c1c', zIndex: 300 }}>
+                {ssSearchError}
+              </div>
+            )}
           </div>
           <button type="button" onClick={() => { setSsInitStyle(null); setSsInitProds(null); setSsOpen(true); }}
             style={{ fontSize: 11, fontWeight: 700, color: '#C41C1C', background: '#fff0f0', border: '1px solid #C41C1C', borderRadius: 5, padding: '4px 9px', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
@@ -686,15 +759,29 @@ function ItemCard({ item, index, calc, isFreeShipping, onChange, onRemove, canRe
         {/* qty */}
         <div>
           <div className="label">Quantity</div>
-          <input type="number" min="1" className="num-input"
-            value={item.quantity} onChange={setNumber('quantity', { min: 1, integer: true })} />
+          {item.sizeBreakdown && item.sizeBreakdown.some(r => (parseInt(r.qty) || 0) > 0)
+            ? <div className="num-input" style={{ background: '#f9fafb', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'default' }}>
+                <span style={{ fontWeight: 700 }}>{itemQty(item)}</span>
+                <span style={{ fontSize: 10, color: '#9ca3af' }}>from sizes ↓</span>
+              </div>
+            : <input type="number" min="1" className="num-input"
+                value={item.quantity} onChange={setNumber('quantity', { min: 1, integer: true })} />
+          }
         </div>
 
         {/* garment price */}
         <div>
           <div className="label">Garment Price / Unit ($)</div>
-          <input type="number" min="0" step="0.01" className="num-input"
-            placeholder="0.00" value={item.garmentPrice} onChange={setNumber('garmentPrice', { min: 0 })} />
+          {item.sizeBreakdown && item.sizeBreakdown.length > 0
+            ? <div className="num-input" style={{ background: '#f9fafb', cursor: 'default' }}>
+                <span style={{ fontWeight: 700 }}>${itemGarmentCost(item).toFixed(2)}</span>
+                <span style={{ fontSize: 10, color: '#9ca3af', marginLeft: 6 }}>
+                  {item.sizeBreakdown.some(r => (parseInt(r.qty) || 0) > 0) ? 'weighted avg' : 'base price'}
+                </span>
+              </div>
+            : <input type="number" min="0" step="0.01" className="num-input"
+                placeholder="0.00" value={item.garmentPrice} onChange={setNumber('garmentPrice', { min: 0 })} />
+          }
           <div className="text-xs mt-1" style={{ color: item._ssLabel ? '#16a34a' : '#9ca3af' }}>
             {item._ssLabel ? `✓ ${item._ssLabel}` : 'Auto-filled when you pick from S&S'}
           </div>
@@ -720,14 +807,19 @@ function ItemCard({ item, index, calc, isFreeShipping, onChange, onRemove, canRe
           <div className="text-xs text-gray-400 mt-1">
             {item.decorationType === 'patch'
               ? <span>Look up at <span className="text-blue-500">stahlsusa.com</span> · +$30 flat ship</span>
-              : <span>Enter total for all {qtyNum(item.quantity)} transfers · +$15 flat ship added automatically</span>
+              : <span>Enter total for all {itemQty(item)} transfers · +$15 flat ship added automatically</span>
             }
           </div>
         </div>
       </div>
 
+      {/* size breakdown table */}
+      {item.sizeBreakdown && item.sizeBreakdown.length > 0 && (
+        <SizeBreakdown breakdown={item.sizeBreakdown} itemId={item.id} onChange={onChange} />
+      )}
+
       {/* results */}
-      {(moneyNum(item.garmentPrice) > 0 || moneyNum(item.decorationPrice) > 0) && (
+      {(itemGarmentCost(item) > 0 || moneyNum(item.decorationPrice) > 0) && (
         <div className="mt-4 pt-4 border-t border-gray-100">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <ResultBox label="Garment Cost / Unit" val={fmtDollar(calc.gPrice)} />
@@ -775,6 +867,71 @@ function ResultBox({ label, val, sub, highlight }) {
   );
 }
 
+// ── Size Breakdown table ───────────────────────────────────────────────────────
+function SizeBreakdown({ breakdown, itemId, onChange }) {
+  if (!breakdown || breakdown.length === 0) return null;
+  const total = breakdown.reduce((s, r) => s + (parseInt(r.qty) || 0), 0);
+  const cost  = breakdown.reduce((s, r) => s + (parseFloat(r.price) || 0) * (parseInt(r.qty) || 0), 0);
+  return (
+    <div style={{ marginTop: 14, padding: '10px 14px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Size Breakdown — enter qty per size
+        </div>
+        <button onClick={() => onChange(itemId, 'sizeBreakdown', [])}
+          style={{ fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px' }}>
+          ✕ Clear sizes
+        </button>
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <thead>
+          <tr style={{ borderBottom: '1.5px solid #e2e8f0' }}>
+            <th style={{ textAlign: 'left',   padding: '3px 8px', color: '#64748b', fontWeight: 600, fontSize: 11 }}>Size</th>
+            <th style={{ textAlign: 'right',  padding: '3px 8px', color: '#64748b', fontWeight: 600, fontSize: 11 }}>S&amp;S Price</th>
+            <th style={{ textAlign: 'center', padding: '3px 8px', color: '#64748b', fontWeight: 600, fontSize: 11 }}>Qty</th>
+            <th style={{ textAlign: 'right',  padding: '3px 8px', color: '#64748b', fontWeight: 600, fontSize: 11 }}>Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          {breakdown.map((row, i) => {
+            const sub = (parseFloat(row.price) || 0) * (parseInt(row.qty) || 0);
+            return (
+              <tr key={row.sizeID || i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                <td style={{ padding: '4px 8px', fontWeight: 600, color: '#374151' }}>{row.sizeName}</td>
+                <td style={{ padding: '4px 8px', textAlign: 'right', color: '#374151' }}>
+                  ${(parseFloat(row.price) || 0).toFixed(2)}
+                </td>
+                <td style={{ padding: '4px 8px', textAlign: 'center' }}>
+                  <input type="number" min="0" value={row.qty}
+                    onChange={e => {
+                      const nb = breakdown.map((r, j) => j === i ? { ...r, qty: e.target.value } : r);
+                      onChange(itemId, 'sizeBreakdown', nb);
+                    }}
+                    style={{ width: 60, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, textAlign: 'center', fontSize: 12 }} />
+                </td>
+                <td style={{ padding: '4px 8px', textAlign: 'right', color: sub > 0 ? '#374151' : '#cbd5e1' }}>
+                  {sub > 0 ? `$${sub.toFixed(2)}` : '—'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr style={{ borderTop: '2px solid #e2e8f0', background: '#f1f5f9' }}>
+            <td colSpan={2} style={{ padding: '5px 8px', fontWeight: 700, fontSize: 12, color: '#374151' }}>
+              Total garment cost
+            </td>
+            <td style={{ padding: '5px 8px', textAlign: 'center', fontWeight: 800, color: '#1A1A1A' }}>{total}</td>
+            <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 800, color: '#C41C1C' }}>
+              {cost > 0 ? `$${cost.toFixed(2)}` : '—'}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
 // ── PDF Generator ─────────────────────────────────────────────────────────────
 function buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimateDate, notes, discountAmount, discountedTotal, discountType, discountValue) {
   const decLabels = { screen_transfer: 'Screen Printed Transfer', ucm: 'UCM Transfer', patch: 'Heat-Applied Patch' };
@@ -786,21 +943,41 @@ function buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimate
 
   const rows = items.map((item, i) => {
     const c = calcs[i];
-    const qty = qtyNum(item.quantity);
+    const qty = c.qty;
     const name = escapeHtml(item.name || `Item ${i + 1}`);
     const decLabel = escapeHtml(decLabels[item.decorationType] || 'Decoration');
-    // Sell-price components (cost × 2 for each)
-    const garmentSellUnit = c.gPrice * c.margin;
-    const decSellUnit     = c.decCostPerUnit * c.margin;
-    const shipSellUnit    = c.shipPerUnit * c.margin;
-    const subRow = (label, detail, sellUnit) => `
+    const decSellUnit  = c.decCostPerUnit * c.margin;
+    const shipSellUnit = c.shipPerUnit * c.margin;
+
+    const subRow = (label, detail, sellUnit, rowQty) => {
+      const q = rowQty !== undefined ? rowQty : qty;
+      return `
       <tr style="background:#fafafa;border-bottom:1px solid #f0f0f0;page-break-inside:avoid">
         <td style="padding:4px 10px 4px 22px;font-size:11px;color:#555;word-break:break-word">${escapeHtml(label)}</td>
         <td style="padding:4px 10px;font-size:11px;color:#777;word-break:break-word">${detail}</td>
-        <td style="padding:4px 8px;text-align:center;font-size:11px;color:#555">${qty}</td>
+        <td style="padding:4px 8px;text-align:center;font-size:11px;color:#555">${q}</td>
         <td style="padding:4px 8px;text-align:right;font-size:11px;color:#555;white-space:nowrap">$${fmt(sellUnit)}</td>
-        <td style="padding:4px 10px;text-align:right;font-size:11px;color:#555;white-space:nowrap">$${fmt(sellUnit * qty)}</td>
+        <td style="padding:4px 10px;text-align:right;font-size:11px;color:#555;white-space:nowrap">$${fmt(sellUnit * q)}</td>
       </tr>`;
+    };
+
+    // Build garment rows — group sizes by price tier
+    let garmentRows;
+    if (c.sizeSells && c.sizeSells.length > 0) {
+      const tiers = {};
+      c.sizeSells.forEach(s => {
+        const key = s.price.toFixed(2);
+        if (!tiers[key]) tiers[key] = { sizes: [], qty: 0, sellPerUnit: s.sellPerUnit };
+        tiers[key].sizes.push(s.sizeName);
+        tiers[key].qty += s.qty;
+      });
+      garmentRows = Object.values(tiers).map(tier =>
+        subRow(`Garments (${tier.sizes.join(', ')})`, 'S&amp;S Activewear', tier.sellPerUnit, tier.qty)
+      ).join('');
+    } else {
+      garmentRows = subRow('Garments', 'S&amp;S Activewear', c.gPrice * c.margin);
+    }
+
     return `
       <tr style="background:#fff;border-top:2px solid #e5e7eb;page-break-inside:avoid">
         <td colspan="2" style="padding:10px 10px 5px;font-weight:800;font-size:13px;color:#1A1A1A;word-break:break-word;line-height:1.3">${name}</td>
@@ -808,7 +985,7 @@ function buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimate
         <td style="padding:10px 8px 5px;text-align:right;font-size:12px;font-weight:700;color:#555;white-space:nowrap">$${fmt(c.sellPerUnit)}</td>
         <td style="padding:10px 10px 5px;text-align:right;font-weight:800;font-size:14px;color:#C41C1C;white-space:nowrap">$${fmt(c.totalSell)}</td>
       </tr>
-      ${subRow('Garments', 'S&amp;S Activewear', garmentSellUnit)}
+      ${garmentRows}
       ${subRow('Decoration', decLabel, decSellUnit)}
       ${shipSellUnit > 0.001 ? subRow('Shipping', 'S&amp;S Activewear', shipSellUnit) : ''}
       ${buildPlacementRows(item)}`;
@@ -917,15 +1094,16 @@ function buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, 
 
   const rows = items.map((item, i) => {
     const c          = calcs[i];
-    const qty        = qtyNum(item.quantity);
+    const qty        = c.qty;
     const name       = escapeHtml(item.name || `Item ${i + 1}`);
     const decLabel   = escapeHtml(decLabels[item.decorationType] || 'Decoration');
     const gtLabel    = escapeHtml((GARMENT_TYPES.find(g => g.value === item.garmentType) || {}).label || 'T-Shirt');
     const itemProfit = c.totalSell - c.totalCost;
     const itemMgn    = c.totalSell > 0 ? (itemProfit / c.totalSell * 100) : 0;
 
-    const cr = (label, cu, su) => {
-      const tc = cu * qty, ts = su * qty, tp = ts - tc;
+    const cr = (label, cu, su, rowQty) => {
+      const q = rowQty !== undefined ? rowQty : qty;
+      const tc = cu * q, ts = su * q, tp = ts - tc;
       return `<tr style="background:#fff;border-bottom:1px solid #f0f0f0">
         <td style="padding:5px 8px 5px 18px;font-size:11px;color:#374151">${label}</td>
         <td style="padding:5px 8px;text-align:right;font-size:11px;color:#374151">$${fmt(cu)}</td>
@@ -935,6 +1113,23 @@ function buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, 
         <td style="padding:5px 8px;text-align:right;font-size:11px;font-weight:600;color:${pc(tp)}">$${fmt(tp)}</td>
       </tr>`;
     };
+
+    // Garment rows — per size tier for internal PDF
+    let garmentRows;
+    if (c.sizeSells && c.sizeSells.length > 0) {
+      const tiers = {};
+      c.sizeSells.forEach(s => {
+        const key = s.price.toFixed(2);
+        if (!tiers[key]) tiers[key] = { sizes: [], qty: 0, price: s.price, sellPerUnit: s.sellPerUnit };
+        tiers[key].sizes.push(s.sizeName);
+        tiers[key].qty += s.qty;
+      });
+      garmentRows = Object.values(tiers).map(tier =>
+        cr(`Garments — ${tier.sizes.join(', ')} (S&amp;S)`, tier.price, tier.sellPerUnit, tier.qty)
+      ).join('');
+    } else {
+      garmentRows = cr('Garments (S&amp;S Activewear)', c.gPrice, c.gPrice * c.margin);
+    }
 
     const fp = item.frontPlacements || [];
     const bp = item.backPlacements  || [];
@@ -956,7 +1151,7 @@ function buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, 
           <span style="color:#aaa;font-size:10px;margin-left:10px">${gtLabel} &middot; Qty: ${qty} &middot; ${decLabel}</span>
         </td>
       </tr>
-      ${cr('Garments (S&amp;S Activewear)', c.gPrice, c.gPrice * c.margin)}
+      ${garmentRows}
       ${cr('Decoration incl. flat shipping', c.decCostPerUnit, c.decCostPerUnit * c.margin)}
       ${c.shipPerUnit > 0.001 ? cr('S&amp;S Supplier Shipping', c.shipPerUnit, c.shipPerUnit * c.margin) : ''}
       <tr style="background:#f3f4f6;border-top:2px solid #e5e7eb">
@@ -1360,11 +1555,17 @@ function App() {
 
   // derived
   const garmentSubtotal = useMemo(
-    () => items.reduce((s, it) => s + qtyNum(it.quantity) * moneyNum(it.garmentPrice), 0),
+    () => items.reduce((s, it) => {
+      if (it.sizeBreakdown && it.sizeBreakdown.length > 0) {
+        const bdCost = it.sizeBreakdown.reduce((ss, r) => ss + (parseFloat(r.price) || 0) * (parseInt(r.qty) || 0), 0);
+        if (bdCost > 0) return s + bdCost;
+      }
+      return s + qtyNum(it.quantity) * moneyNum(it.garmentPrice);
+    }, 0),
     [items]
   );
   const isFreeShipping = garmentSubtotal >= 200;
-  const totalQty = useMemo(() => items.reduce((s, it) => s + qtyNum(it.quantity), 0), [items]);
+  const totalQty = useMemo(() => items.reduce((s, it) => s + itemQty(it), 0), [items]);
   const supplierShippingNum = isFreeShipping ? 0 : moneyNum(supplierShipping);
 
   const marginNum  = marginNumFrom(marginPct);
