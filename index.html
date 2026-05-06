@@ -606,7 +606,6 @@ function buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimate
   </div>`;
 }
 
-//
 // ── Internal PDF Builder ──────────────────────────────────────────────────────
 function buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, estimateDate, notes,
   discountAmount, discountedTotal, discountType, discountValue, marginPct, multiplier, effectiveMargin) {
@@ -770,7 +769,7 @@ function buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, 
   );
 }
 
- ── Summary Panel ─────────────────────────────────────────────────────────────
+// ── Summary Panel ─────────────────────────────────────────────────────────────
 function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estimateNumber, estimateDate, notes,
   discountType, discountValue, setDiscountType, setDiscountValue, discountAmount, discountedTotal, effectiveMargin,
   marginPct, setMarginPct, multiplier }) {
