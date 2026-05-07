@@ -1298,6 +1298,25 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
   discountType, discountValue, setDiscountType, setDiscountValue, discountAmount, discountedTotal, effectiveMargin,
   marginPct, setMarginPct, multiplier,
   onSave, onNew, onLoadOpen, saving, savedId }) {
+  // Renders an HTML string to PDF via a real DOM element with explicit width.
+  // Passing a raw string to html2pdf creates a zero-width container, causing
+  // html2canvas to capture blank output.
+  const renderHtmlToPdf = (html, fileName) => {
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;left:-9999px;top:0;width:780px;background:#fff;z-index:-1;';
+    el.innerHTML = html;
+    document.body.appendChild(el);
+    html2pdf().set({
+      margin: [8, 8, 8, 8],
+      filename: fileName,
+      image: { type: 'jpeg', quality: 0.97 },
+      html2canvas: { scale: 2, useCORS: true, allowTaint: true, logging: false, width: 780 },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    }).from(el).save()
+      .catch(err => alert('PDF error: ' + err.message))
+      .finally(() => { if (el.parentNode) el.parentNode.removeChild(el); });
+  };
+
   const exportPdf = () => {
     try {
       const html = buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimateDate, notes,
@@ -1308,13 +1327,7 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
         clientName ? safeFilePart(clientName) : '',
         safeFilePart(estimateDate),
       ].filter(Boolean).join('_') + '.pdf';
-      html2pdf().set({
-        margin: [10, 10, 10, 10],
-        filename: fileName,
-        image: { type: 'jpeg', quality: 0.97 },
-        html2canvas: { scale: 2, useCORS: true, allowTaint: true, logging: false },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-      }).from(html).save();
+      renderHtmlToPdf(html, fileName);
     } catch(err) {
       alert('PDF error: ' + err.message);
       console.error('exportPdf error:', err);
@@ -1331,13 +1344,7 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
         clientName ? safeFilePart(clientName) : '',
         safeFilePart(estimateDate),
       ].filter(Boolean).join('_') + '.pdf';
-      html2pdf().set({
-        margin: [10, 10, 10, 10],
-        filename: iFileName,
-        image: { type: 'jpeg', quality: 0.97 },
-        html2canvas: { scale: 2, useCORS: true, allowTaint: true, logging: false },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-      }).from(iHtml).save();
+      renderHtmlToPdf(iHtml, iFileName);
     } catch(err) {
       alert('PDF error: ' + err.message);
       console.error('exportInternalPdf error:', err);
