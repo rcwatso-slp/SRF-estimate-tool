@@ -1508,12 +1508,18 @@ function EstimatesList({ onLoad, onClose }) {
   const [loading, setLoading]     = React.useState(true);
   const [deleting, setDeleting]   = React.useState(null);
 
+  const [fetchError, setFetchError] = React.useState(null);
+
   React.useEffect(() => {
     _supabase.from('estimates')
       .select('id, client_name, estimate_number, estimate_date, total_sell, updated_at')
       .order('updated_at', { ascending: false })
       .limit(100)
-      .then(({ data }) => { setEstimates(data || []); setLoading(false); });
+      .then(({ data, error }) => {
+        if (error) { setFetchError(error.message); setLoading(false); return; }
+        setEstimates(data || []);
+        setLoading(false);
+      });
   }, []);
 
   React.useEffect(() => {
@@ -1523,7 +1529,8 @@ function EstimatesList({ onLoad, onClose }) {
   }, [onClose]);
 
   const loadFull = async (id) => {
-    const { data } = await _supabase.from('estimates').select('*').eq('id', id).single();
+    const { data, error } = await _supabase.from('estimates').select('*').eq('id', id).single();
+    if (error) { alert('Failed to load estimate: ' + error.message); return; }
     if (data) onLoad(data);
   };
 
@@ -1546,7 +1553,8 @@ function EstimatesList({ onLoad, onClose }) {
         </div>
         <div style={{ overflowY: 'auto', flex: 1 }}>
           {loading && <div style={{ padding: 24, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>Loading…</div>}
-          {!loading && estimates.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>No saved estimates yet.</div>}
+          {!loading && fetchError && <div style={{ padding: 24, textAlign: 'center', color: '#C41C1C', fontSize: 13 }}>Error loading estimates: {fetchError}</div>}
+          {!loading && !fetchError && estimates.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>No saved estimates yet.</div>}
           {estimates.map(est => (
             <div key={est.id} onClick={() => loadFull(est.id)}
               style={{ padding: '13px 20px', borderBottom: '1px solid #f0f0f0', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}
@@ -1652,6 +1660,7 @@ function App() {
       estimate_number: estimateNumber, client_name: clientName, estimate_date: estimateDate,
       notes, items, discount_type: discountType, discount_value: discountValue,
       margin_pct: marginPct, total_cost: totals.totalCost, total_sell: totals.totalSell,
+      supplier_shipping: supplierShipping,
       updated_at: new Date().toISOString(),
     };
     const { data } = savedId
@@ -1670,11 +1679,15 @@ function App() {
   };
 
   const loadEstimate = (est) => {
-    setItems(est.items && est.items.length ? est.items : [createItem()]);
+    // Normalize items — add sizeBreakdown if missing (estimates saved before that feature)
+    const rawItems = est.items && est.items.length ? est.items : [createItem()];
+    const normalized = rawItems.map(it => ({ sizeBreakdown: [], ...it }));
+    setItems(normalized);
     setClientName(est.client_name || ''); setEstNum(est.estimate_number || '');
     setEstDate(est.estimate_date || new Date().toISOString().slice(0, 10));
     setNotes(est.notes || ''); setDiscountType(est.discount_type || 'percent');
     setDiscountValue(est.discount_value || ''); setMarginPct(est.margin_pct || '50');
+    setSupShip(est.supplier_shipping || '');
     setSavedId(est.id); setLoadOpen(false);
   };
 
