@@ -492,7 +492,7 @@ function SSSearchModal({ onClose, onSelect, initialStyle, initialProducts }) {
   const loadColors = async (style) => {
     setSelStyle(style); setProducts([]); setLoadingProds(true); setError('');
     try {
-      const r = await fetch(`/api/ss?path=products&StyleID=${encodeURIComponent(style.styleID)}`);
+      const r = await fetch(`/api/ss?path=products&styleid=${encodeURIComponent(style.styleID)}`);
       const data = await r.json();
       setProducts(r.ok && Array.isArray(data) ? data : []);
     } catch(e) { setError(e.message); }

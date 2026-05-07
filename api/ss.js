@@ -39,6 +39,7 @@ module.exports = async function handler(req, res) {
       const terms = query.split(/\s+/).filter(Boolean);
 
       // Build style ID candidates: individual terms + adjacent pairs
+      // S&S API uses lowercase 'styleid' param
       const candidates = new Set();
       terms.forEach((t, i) => {
         const clean = t.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -49,50 +50,45 @@ module.exports = async function handler(req, res) {
         }
       });
 
-      // Try each candidate as a direct style ID → products endpoint
+      // Try each candidate as a direct style ID (S&S param: styleid)
       for (const candidate of candidates) {
-        const r = await ssGet('products/', { StyleID: candidate });
+        const r = await ssGet('products/', { styleid: candidate });
         if (r.ok && Array.isArray(r.data) && r.data.length > 0) {
-          const sr = await ssGet('styles/', { StyleID: candidate });
+          // Get style info
+          const sr = await ssGet('styles/', { styleid: candidate });
           const styleInfo = (sr.ok && Array.isArray(sr.data) && sr.data[0])
             || { styleID: candidate, title: candidate, brandName: '' };
-          console.log('S&S direct match:', candidate);
+          console.log('S&S direct match:', candidate, '->', r.data.length, 'products');
           return res.status(200).json({ type: 'direct', styleInfo, products: r.data });
         }
       }
 
-      // Brand/title search — try non-numeric terms as brand names
-      const brandTerms = terms.filter(t => !/^\d/.test(t) && t.length > 2);
-      if (brandTerms.length > 0) {
-        for (const brand of brandTerms) {
-          // Try BrandName filter
-          const r = await ssGet('styles/', { BrandName: brand });
-          if (r.ok && Array.isArray(r.data) && r.data.length > 0) {
-            const remaining = terms
-              .filter(t => t.toLowerCase() !== brand.toLowerCase())
-              .map(t => t.toLowerCase());
-            const filtered = remaining.length
-              ? r.data.filter(s => {
+      // Text/brand search — S&S styles endpoint supports ?search= for keyword search
+      const searchTerms = terms.filter(t => t.length > 2);
+      if (searchTerms.length > 0) {
+        // Try the full query as a search
+        const r = await ssGet('styles/', { search: query });
+        if (r.ok && Array.isArray(r.data) && r.data.length > 0) {
+          console.log('S&S text search:', query, '->', r.data.length, 'results');
+          return res.status(200).json({ type: 'styles', results: r.data.slice(0, 40) });
+        }
+
+        // Try each significant term as a search
+        for (const term of searchTerms) {
+          const r2 = await ssGet('styles/', { search: term });
+          if (r2.ok && Array.isArray(r2.data) && r2.data.length > 0) {
+            // Filter by remaining terms
+            const rest = terms.filter(t => t.toLowerCase() !== term.toLowerCase()).map(t => t.toLowerCase());
+            const filtered = rest.length
+              ? r2.data.filter(s => {
                   const text = `${s.styleID || ''} ${s.title || ''} ${s.categoryName || ''} ${s.brandName || ''}`.toLowerCase();
-                  return remaining.every(t => text.includes(t));
+                  return rest.every(t => text.includes(t));
                 })
-              : r.data;
+              : r2.data;
             if (filtered.length > 0) {
-              console.log('S&S brand match:', brand, '->', filtered.length, 'results');
+              console.log('S&S term search:', term, '->', filtered.length, 'filtered results');
               return res.status(200).json({ type: 'styles', results: filtered.slice(0, 40) });
             }
-          }
-        }
-      }
-
-      // Last-resort: try the query as-is against the styles endpoint (some S&S endpoints accept partial)
-      if (query.length >= 3 && query.length <= 20) {
-        const r = await ssGet('styles/', { StyleID: query.toUpperCase().replace(/\s+/g, '') });
-        if (r.ok && Array.isArray(r.data) && r.data.length > 0) {
-          const styleID = query.toUpperCase().replace(/\s+/g, '');
-          const pr = await ssGet('products/', { StyleID: styleID });
-          if (pr.ok && Array.isArray(pr.data) && pr.data.length > 0) {
-            return res.status(200).json({ type: 'direct', styleInfo: r.data[0], products: pr.data });
           }
         }
       }
