@@ -1663,9 +1663,10 @@ function App() {
       supplier_shipping: supplierShipping,
       updated_at: new Date().toISOString(),
     };
-    const { data } = savedId
+    const { data, error } = savedId
       ? await _supabase.from('estimates').update(payload).eq('id', savedId).select().single()
       : await _supabase.from('estimates').insert(payload).select().single();
+    if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
     if (data) setSavedId(data.id);
     setSaving(false);
   };
