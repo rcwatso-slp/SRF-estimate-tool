@@ -1296,7 +1296,7 @@ function buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, 
 function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estimateNumber, estimateDate, notes,
   discountType, discountValue, setDiscountType, setDiscountValue, discountAmount, discountedTotal, effectiveMargin,
   marginPct, setMarginPct, multiplier,
-  onSave, onNew, onLoadOpen, saving, savedId }) {
+  onSave, onNew, onLoadOpen, saving, savedId, autoSaveStatus }) {
   const renderHtmlToPdf = (html, fileName) => {
     const win = window.open('', '_blank');
     if (!win) {
@@ -1475,7 +1475,12 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
         style={{ width: '100%', background: 'none', color: '#6b7280', border: '1px dashed #d1d5db', borderRadius: 7, padding: '7px 0', fontWeight: 600, fontSize: 12, cursor: 'pointer', marginBottom: 10 }}>
         + New Estimate
       </button>
-      {savedId && <div style={{ textAlign: 'center', fontSize: 11, color: '#16a34a', marginBottom: 8 }}>Auto-saved · ID {savedId.slice(0, 8)}…</div>}
+      {autoSaveStatus && (
+        <div style={{ textAlign: 'center', fontSize: 11, marginBottom: 8,
+          color: autoSaveStatus.startsWith('⚠') ? '#b45309' : '#16a34a' }}>
+          {autoSaveStatus}
+        </div>
+      )}
 
       <button
         onClick={exportPdf}
@@ -1647,6 +1652,10 @@ function App() {
   const [savedId, setSavedId]       = useState(null);
   const [saving, setSaving]         = useState(false);
   const [loadOpen, setLoadOpen]     = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState('');
+  const autoSaveTimer = React.useRef(null);
+  const supabaseSaveTimer = React.useRef(null);
+  const isRestoringDraft = React.useRef(false);
 
   React.useEffect(() => {
     _supabase.auth.getSession().then(({ data: { session: s } }) => { setSession(s); setAuthChecked(true); });
@@ -1654,8 +1663,76 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // ── Restore localStorage draft on first load ────────────────────────────────
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem('srf_draft');
+      if (raw) {
+        const draft = JSON.parse(raw);
+        if (draft.items && draft.items.length > 0) {
+          isRestoringDraft.current = true;
+          const normalized = draft.items.map(it => ({ sizeBreakdown: [], ...it }));
+          setItems(normalized);
+          setClientName(draft.clientName || '');
+          setEstNum(draft.estimateNumber || '');
+          setEstDate(draft.estimateDate || new Date().toISOString().slice(0, 10));
+          setNotes(draft.notes || '');
+          setSupShip(draft.supplierShipping || '');
+          setMarginPct(draft.marginPct || '50');
+          setDiscountType(draft.discountType || 'percent');
+          setDiscountValue(draft.discountValue || '');
+          setSavedId(draft.savedId || null);
+          setAutoSaveStatus('↩ Draft restored');
+          setTimeout(() => setAutoSaveStatus(''), 3000);
+          isRestoringDraft.current = false;
+        }
+      }
+    } catch(e) {}
+  }, []);
+
+  // ── Auto-save draft to localStorage on every change (debounced 800ms) ───────
+  React.useEffect(() => {
+    if (isRestoringDraft.current) return;
+    clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      try {
+        const draft = { items, clientName, estimateNumber, estimateDate, notes,
+          supplierShipping, marginPct, discountType, discountValue, savedId };
+        localStorage.setItem('srf_draft', JSON.stringify(draft));
+        setAutoSaveStatus('✓ Draft saved locally');
+      } catch(e) {}
+    }, 800);
+    return () => clearTimeout(autoSaveTimer.current);
+  }, [items, clientName, estimateNumber, estimateDate, notes, supplierShipping, marginPct, discountType, discountValue, savedId]);
+
+  // ── Auto-save to Supabase 30s after last change (when logged in) ─────────────
+  React.useEffect(() => {
+    if (!session) return;
+    if (isRestoringDraft.current) return;
+    clearTimeout(supabaseSaveTimer.current);
+    supabaseSaveTimer.current = setTimeout(async () => {
+      const payload = {
+        estimate_number: estimateNumber, client_name: clientName, estimate_date: estimateDate,
+        notes, items, discount_type: discountType, discount_value: discountValue,
+        margin_pct: marginPct, total_cost: totals.totalCost, total_sell: totals.totalSell,
+        supplier_shipping: supplierShipping, updated_at: new Date().toISOString(),
+      };
+      const { data, error } = savedId
+        ? await _supabase.from('estimates').update(payload).eq('id', savedId).select().single()
+        : await _supabase.from('estimates').insert(payload).select().single();
+      if (!error && data) {
+        setSavedId(data.id);
+        setAutoSaveStatus('✓ Auto-saved to cloud');
+      } else if (error) {
+        setAutoSaveStatus('⚠ Cloud save failed');
+      }
+    }, 30000);
+    return () => clearTimeout(supabaseSaveTimer.current);
+  }, [items, clientName, estimateNumber, estimateDate, notes, supplierShipping, marginPct, discountType, discountValue]);
+
   const saveEstimate = async () => {
     setSaving(true);
+    clearTimeout(supabaseSaveTimer.current); // cancel any pending auto-save
     const payload = {
       estimate_number: estimateNumber, client_name: clientName, estimate_date: estimateDate,
       notes, items, discount_type: discountType, discount_value: discountValue,
@@ -1667,19 +1744,27 @@ function App() {
       ? await _supabase.from('estimates').update(payload).eq('id', savedId).select().single()
       : await _supabase.from('estimates').insert(payload).select().single();
     if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
-    if (data) setSavedId(data.id);
+    if (data) {
+      setSavedId(data.id);
+      setAutoSaveStatus('✓ Saved to cloud');
+    }
     setSaving(false);
   };
 
   const newEstimate = () => {
     if (!window.confirm('Start a new estimate? Unsaved changes will be lost.')) return;
+    clearTimeout(autoSaveTimer.current);
+    clearTimeout(supabaseSaveTimer.current);
+    localStorage.removeItem('srf_draft');
     setItems([createItem()]); setClientName(''); setEstNum('');
     setEstDate(new Date().toISOString().slice(0, 10)); setNotes('');
     setSupShip(''); setMarginPct('50'); setDiscountType('percent');
-    setDiscountValue(''); setSavedId(null);
+    setDiscountValue(''); setSavedId(null); setAutoSaveStatus('');
   };
 
   const loadEstimate = (est) => {
+    clearTimeout(autoSaveTimer.current);
+    clearTimeout(supabaseSaveTimer.current);
     // Normalize items — add sizeBreakdown if missing (estimates saved before that feature)
     const rawItems = est.items && est.items.length ? est.items : [createItem()];
     const normalized = rawItems.map(it => ({ sizeBreakdown: [], ...it }));
@@ -1689,7 +1774,8 @@ function App() {
     setNotes(est.notes || ''); setDiscountType(est.discount_type || 'percent');
     setDiscountValue(est.discount_value || ''); setMarginPct(est.margin_pct || '50');
     setSupShip(est.supplier_shipping || '');
-    setSavedId(est.id); setLoadOpen(false);
+    setSavedId(est.id); setLoadOpen(false); setAutoSaveStatus('✓ Loaded from cloud');
+    localStorage.removeItem('srf_draft');
   };
 
   const handleChange = useCallback((id, field, value) => {
@@ -1864,6 +1950,7 @@ function App() {
               onLoadOpen={() => setLoadOpen(true)}
               saving={saving}
               savedId={savedId}
+              autoSaveStatus={autoSaveStatus}
             />
 
             {/* Per-item breakdown */}
