@@ -465,7 +465,7 @@ function groupByColor(products) {
   (products || []).forEach(p => {
     const key = p.colorName || p.colorID || 'Unknown';
     if (!map[key]) map[key] = { colorName: key, prices: [], totalQty: 0, image: p.colorFrontImage || p.styleImage || null };
-    map[key].prices.push({ sizeID: p.sizeID, sizeName: p.sizeName || p.sizeID, price: p.price || 0, qty: p.qty || 0 });
+    map[key].prices.push({ sizeID: p.sizeID, sizeName: p.sizeName || p.sizeID, price: p.piecePrice || p.price || 0, qty: p.qty || 0 });
     map[key].totalQty += (p.qty || 0);
   });
   return Object.values(map).sort((a, b) => a.colorName.localeCompare(b.colorName));
