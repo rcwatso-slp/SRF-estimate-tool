@@ -488,6 +488,13 @@ function SSSearchModal({ onClose, onSelect, initialStyle, initialProducts }) {
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
   }, [onClose]);
+  // Auto-load colors when modal opens with a pre-selected style but no products yet
+  React.useEffect(() => {
+    if (initialStyle && (!initialProducts || initialProducts.length === 0)) {
+      loadColors(initialStyle);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadColors = async (style) => {
     setSelStyle(style); setProducts([]); setLoadingProds(true); setError('');
