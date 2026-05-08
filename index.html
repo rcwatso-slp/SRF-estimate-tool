@@ -147,14 +147,14 @@ function calcItem(item, isFreeShipping, supplierShippingTotal, totalQtyAll, mult
   const qty    = itemQty(item);
   const dPrice = moneyNum(item.decorationPrice);
 
-  // decoration flat shipping
-  const decFlat = item.decorationType === 'patch' ? 30 : 15;
-
-  // decoration cost per unit (amortised)
+  // decoration cost per unit
+  // dPrice is treated as the total order decoration cost (already includes any shipping)
+  // patch is per-unit; screen_transfer / ucm is a total order price
+  const decFlat = 0;
   const decCostPerUnit = qty > 0
     ? item.decorationType === 'patch'
-      ? (dPrice * qty + decFlat) / qty
-      : (dPrice + decFlat) / qty
+      ? dPrice                  // per-unit price
+      : dPrice / qty            // total order price ÷ qty
     : 0;
 
   // supplier shipping allocated to this item (total, not per-unit)
@@ -845,7 +845,7 @@ function ItemCard({ item, index, calc, isFreeShipping, onChange, onRemove, canRe
         <div className="mt-4 pt-4 border-t border-gray-100">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <ResultBox label="Garment Cost / Unit" val={fmtDollar(calc.gPrice)} />
-            <ResultBox label="Decoration Cost / Unit" val={fmtDollar(calc.decCostPerUnit)} sub={`incl. $${calc.decFlat} ship`} />
+            <ResultBox label="Decoration Cost / Unit" val={fmtDollar(calc.decCostPerUnit)} />
             <ResultBox label="Shipping / Unit" val={isFreeShipping ? '$0.00' : fmtDollar(calc.shipPerUnit)} sub={isFreeShipping ? 'Free' : ''} />
             <div className="rounded-lg p-3 bg-brand-red text-white">
               <div className="text-xs font-semibold uppercase tracking-wide mb-1 text-red-100">Sell Price / Unit</div>
