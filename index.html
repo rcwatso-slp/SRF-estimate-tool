@@ -1298,6 +1298,45 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
   discountType, discountValue, setDiscountType, setDiscountValue, discountAmount, discountedTotal, effectiveMargin,
   marginPct, setMarginPct, multiplier,
   onSave, onNew, onLoadOpen, saving, savedId, autoSaveStatus }) {
+  const [shopifySending, setShopifySending] = React.useState(false);
+  const [shopifyResult, setShopifyResult]   = React.useState(null);
+
+  const sendToShopify = async () => {
+    setShopifySending(true);
+    setShopifyResult(null);
+    try {
+      // Build line items from calcs + items
+      const lineItems = items.map((item, i) => {
+        const c = calcs[i];
+        if (!c) return null;
+        return {
+          description: item.description || `Item ${i + 1}`,
+          decorationType: item.decorationType,
+          qty: c.qty,
+          sellPerUnit: c.sellPerUnit,
+          totalSell: c.totalSell,
+        };
+      }).filter(Boolean);
+
+      const res = await fetch('/api/shopify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: lineItems,
+          clientName, estimateNumber, estimateDate, notes,
+          discountAmount, discountedTotal, totals,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to create draft');
+      setShopifyResult(data);
+    } catch (err) {
+      setShopifyResult({ error: err.message });
+    } finally {
+      setShopifySending(false);
+    }
+  };
+
   const renderHtmlToPdf = (html, fileName) => {
     const win = window.open('', '_blank');
     if (!win) {
@@ -1504,6 +1543,31 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
       </button>
 
       <p className="text-xs text-gray-400 mt-2 text-center">Client PDF hides cost &amp; margin &middot; Internal includes all data</p>
+
+      <button
+        onClick={sendToShopify}
+        disabled={shopifySending}
+        className="w-full mt-3 py-2.5 px-4 rounded-lg font-bold text-sm uppercase tracking-wide transition-colors"
+        style={{ background: shopifySending ? '#9ca3af' : '#5c6ac4', color: '#fff', cursor: shopifySending ? 'default' : 'pointer' }}
+        onMouseOver={e => { if (!shopifySending) e.currentTarget.style.background = '#4959bd'; }}
+        onMouseOut={e => { if (!shopifySending) e.currentTarget.style.background = '#5c6ac4'; }}
+      >
+        {shopifySending ? 'Creating Draft…' : '🛍 Send to Shopify Draft'}
+      </button>
+      {shopifyResult && (
+        <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 8,
+          background: shopifyResult.error ? '#fef2f2' : '#f0fdf4',
+          border: `1px solid ${shopifyResult.error ? '#fca5a5' : '#86efac'}`,
+          fontSize: 12 }}>
+          {shopifyResult.error
+            ? <span style={{ color: '#dc2626' }}>⚠ {shopifyResult.error}</span>
+            : <span style={{ color: '#16a34a' }}>✓ Draft {shopifyResult.name} created —{' '}
+                <a href={shopifyResult.adminUrl} target="_blank" rel="noreferrer"
+                  style={{ color: '#16a34a', fontWeight: 700 }}>Open in Shopify</a>
+              </span>
+          }
+        </div>
+      )}
     </div>
   );
 }
