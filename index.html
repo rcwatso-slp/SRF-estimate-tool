@@ -1310,7 +1310,7 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
         const c = calcs[i];
         if (!c) return null;
         return {
-          description: item.description || `Item ${i + 1}`,
+          description: item.name || `Item ${i + 1}`,
           decorationType: item.decorationType,
           qty: c.qty,
           sellPerUnit: c.sellPerUnit,
