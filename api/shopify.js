@@ -12,7 +12,7 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'Shopify credentials not configured on server.' });
   }
 
-  const { items, clientName, estimateNumber, estimateDate, notes, discountAmount, discountedTotal, totals } = req.body;
+  const { items, clientName, estimateNumber, estimateDate, notes, discountAmount, discountType, discountValue, totals } = req.body;
 
   if (!items || !items.length) {
     return res.status(400).json({ error: 'No items provided.' });
@@ -48,6 +48,28 @@ module.exports = async function handler(req, res) {
   if (estimateDate)   noteAttributes.push({ name: 'Estimate Date', value: estimateDate });
   if (clientName)     noteAttributes.push({ name: 'Client', value: clientName });
 
+  // Build discount for Shopify if one was applied
+  let appliedDiscount = null;
+  if (discountAmount && parseFloat(discountAmount) > 0) {
+    if (discountType === 'percent' && discountValue) {
+      appliedDiscount = {
+        description: 'Estimate Discount',
+        value_type: 'percentage',
+        value: String(parseFloat(discountValue)),
+        amount: String(parseFloat(discountAmount).toFixed(2)),
+        title: `${discountValue}% Discount`,
+      };
+    } else if (discountType === 'fixed' && discountValue) {
+      appliedDiscount = {
+        description: 'Estimate Discount',
+        value_type: 'fixed_amount',
+        value: String(parseFloat(discountValue).toFixed(2)),
+        amount: String(parseFloat(discountAmount).toFixed(2)),
+        title: `$${parseFloat(discountValue).toFixed(2)} Discount`,
+      };
+    }
+  }
+
   // Build draft order payload
   const draftOrder = {
     draft_order: {
@@ -55,6 +77,7 @@ module.exports = async function handler(req, res) {
       note: notes || '',
       note_attributes: noteAttributes,
       tags: 'SRF Estimate',
+      ...(appliedDiscount && { applied_discount: appliedDiscount }),
       ...(clientName && {
         shipping_address: { first_name: clientName, last_name: '' },
       }),

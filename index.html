@@ -138,6 +138,7 @@ function createItem() {
     frontPlacements: [],
     backPlacements: [],
     sizeBreakdown: [],   // [{sizeID, sizeName, price, qty}]
+    sellOverride: '',    // optional manual sell price per unit
   };
 }
 
@@ -185,21 +186,28 @@ function calcItem(item, isFreeShipping, supplierShippingTotal, totalQtyAll, mult
   } else {
     gPrice = moneyNum(item.garmentPrice);
     const totalCostPerUnit = gPrice + decCostPerUnit + shipPerUnit;
-    sellPerUnit = totalCostPerUnit * multiplier;
+    const overrideVal = moneyNum(item.sellOverride);
+    sellPerUnit = overrideVal > 0 ? overrideVal : totalCostPerUnit * multiplier;
     totalCost   = totalCostPerUnit * qty;
     totalSell   = sellPerUnit * qty;
   }
+
+  const costPerUnit = qty > 0 ? (gPrice + decCostPerUnit + shipPerUnit) : 0;
+  const actualMarginPct = sellPerUnit > 0 && costPerUnit > 0
+    ? ((sellPerUnit - costPerUnit) / sellPerUnit) * 100
+    : 0;
 
   return {
     qty, gPrice, dPrice, decFlat,
     decCostPerUnit,
     shipPerUnit,
     itemShipTotal,
-    totalCostPerUnit: qty > 0 ? (gPrice + decCostPerUnit + shipPerUnit) : 0,
+    totalCostPerUnit: costPerUnit,
     sellPerUnit,
     totalCost,
     totalSell,
     margin: multiplier,
+    actualMarginPct,
     sizeSells,
   };
 }
@@ -832,7 +840,24 @@ function ItemCard({ item, index, calc, isFreeShipping, onChange, onRemove, canRe
             <ResultBox label="Garment Cost / Unit" val={fmtDollar(calc.gPrice)} />
             <ResultBox label="Decoration Cost / Unit" val={fmtDollar(calc.decCostPerUnit)} sub={`incl. $${calc.decFlat} ship`} />
             <ResultBox label="Shipping / Unit" val={isFreeShipping ? '$0.00' : fmtDollar(calc.shipPerUnit)} sub={isFreeShipping ? 'Free' : ''} />
-            <ResultBox label="Sell Price / Unit" val={fmtDollar(calc.sellPerUnit)} highlight />
+            <div className="rounded-lg p-3 bg-brand-red text-white">
+              <div className="text-xs font-semibold uppercase tracking-wide mb-1 text-red-100">Sell Price / Unit</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ fontSize: 13, fontWeight: 700 }}>$</span>
+                <input
+                  type="number" min="0" step="0.01"
+                  value={item.sellOverride !== '' ? item.sellOverride : ''}
+                  placeholder={fmtDollar(calc.sellPerUnit).replace('$', '')}
+                  onChange={e => onChange(item.id, 'sellOverride', e.target.value)}
+                  style={{ background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: 4,
+                    color: '#fff', fontWeight: 700, fontSize: 15, width: '100%',
+                    padding: '2px 4px', outline: 'none' }}
+                />
+              </div>
+              <div style={{ fontSize: 10, marginTop: 4, color: 'rgba(255,255,255,0.85)' }}>
+                {item.sellOverride ? `${calc.actualMarginPct.toFixed(1)}% margin` : `${((1 - 1 / (calc.margin || 2)) * 100).toFixed(0)}% margin`}
+              </div>
+            </div>
           </div>
 
           {/* Internal cost & profit box — hidden from PDF */}
@@ -1324,7 +1349,7 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
         body: JSON.stringify({
           items: lineItems,
           clientName, estimateNumber, estimateDate, notes,
-          discountAmount, discountedTotal, totals,
+          discountAmount, discountedTotal, discountType, discountValue, totals,
         }),
       });
       const data = await res.json();
