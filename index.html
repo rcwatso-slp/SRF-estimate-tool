@@ -1738,6 +1738,20 @@ function App() {
     totalSell: calcs.reduce((s, c) => s + c.totalSell, 0),
   }), [calcs, totalQty, garmentSubtotal, supplierShippingNum]);
 
+  // When Target Margin changes, also update sellOverride on items that have one
+  const handleMarginChange = useCallback((newMarginStr) => {
+    setMarginPct(newMarginStr);
+    const m = marginNumFrom(newMarginStr);
+    if (m <= 0 || m >= 100) return;
+    const newMult = 1 / (1 - m / 100);
+    setItems(prev => prev.map((item, i) => {
+      if (!item.sellOverride || moneyNum(item.sellOverride) === 0) return item;
+      const cost = calcs[i]?.totalCostPerUnit ?? 0;
+      if (cost <= 0) return item;
+      return { ...item, sellOverride: (cost * newMult).toFixed(2) };
+    }));
+  }, [calcs]);
+
   const discountNum = discountType === 'percent'
     ? percentNum(discountValue)
     : moneyNum(discountValue);
@@ -2051,7 +2065,7 @@ function App() {
               discountedTotal={discountedTotal}
               effectiveMargin={effectiveMargin}
               marginPct={marginPct}
-              setMarginPct={setMarginPct}
+              setMarginPct={handleMarginChange}
               multiplier={multiplier}
               onSave={saveEstimate}
               onNew={newEstimate}
