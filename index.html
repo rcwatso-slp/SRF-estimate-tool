@@ -1143,7 +1143,7 @@ function buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, 
   const finalTotal         = hasDiscount ? discountedTotal : totals.totalSell;
   const totalProfit        = finalTotal - totals.totalCost;
   const marginNum          = marginNumFrom(marginPct);
-  const displayMargin      = hasDiscount ? effectiveMargin : marginNum;
+  const displayMargin      = effectiveMargin;
   const pc = v => v >= 0 ? '#16a34a' : '#ef4444';
 
   const rows = items.map((item, i) => {
@@ -1527,8 +1527,8 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
         {discountAmount === 0 && (
           <div className="result-row mt-1">
             <span className="result-label">Overall Margin</span>
-            <span className="result-val" style={{color: marginNumFrom(marginPct) < 30 ? '#ef4444' : marginNumFrom(marginPct) < 40 ? '#f97316' : '#16a34a'}}>
-              {fmt(marginNumFrom(marginPct), 1)}%
+            <span className="result-val" style={{color: effectiveMargin < 30 ? '#ef4444' : effectiveMargin < 40 ? '#f97316' : '#16a34a'}}>
+              {fmt(effectiveMargin, 1)}%
             </span>
           </div>
         )}
