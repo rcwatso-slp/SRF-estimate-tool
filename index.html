@@ -1372,6 +1372,36 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to create draft');
       setShopifyResult(data);
+
+      // ── Write job to the order status board ──────────────────────────────
+      try {
+        const jobItems = items.map((item, i) => {
+          const c = calcs[i];
+          const sizes = (item.sizeBreakdown || [])
+            .filter(r => (parseInt(r.qty) || 0) > 0)
+            .map(r => `${r.sizeName} ×${r.qty}`);
+          return {
+            name:           item.name || `Item ${i + 1}`,
+            qty:            c?.qty || 0,
+            decorationType: item.decorationType,
+            garmentType:    item.garmentType,
+            sizes,
+          };
+        });
+        await _supabase.from('jobs').insert({
+          estimate_number:   estimateNumber || '',
+          client_name:       clientName || '',
+          shopify_order_name: data.name || '',
+          shopify_draft_url:  data.invoiceUrl || '',
+          shopify_admin_url:  data.adminUrl || '',
+          items:             jobItems,
+          status:            'new',
+          notes:             '',
+        });
+      } catch(jobErr) {
+        console.warn('Job board write failed:', jobErr.message);
+        // Non-fatal — Shopify draft was still created successfully
+      }
     } catch (err) {
       setShopifyResult({ error: err.message });
     } finally {
