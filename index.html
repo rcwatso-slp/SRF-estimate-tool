@@ -658,6 +658,7 @@ function ItemCard({ item, index, calc, isFreeShipping, onChange, onRemove, canRe
         sizeID:   p.sizeID   || p.sizeName,
         sizeName: p.sizeName || p.sizeID,
         price:    p.price    || 0,
+        ssPrice:  p.price    || 0,   // original S&S wholesale price, kept so manual edits can be reset
         qty:      0,
       }));
       onChange(item.id, 'sizeBreakdown', breakdown);
@@ -798,7 +799,7 @@ function ItemCard({ item, index, calc, isFreeShipping, onChange, onRemove, canRe
             ? <div className="num-input" style={{ background: '#f9fafb', cursor: 'default' }}>
                 <span style={{ fontWeight: 700 }}>${itemGarmentCost(item).toFixed(2)}</span>
                 <span style={{ fontSize: 10, color: '#9ca3af', marginLeft: 6 }}>
-                  {item.sizeBreakdown.some(r => (parseInt(r.qty) || 0) > 0) ? 'weighted avg' : 'base price'}
+                  {item.sizeBreakdown.some(r => (parseInt(r.qty) || 0) > 0) ? 'weighted avg' : 'base price'} · edit per size ↓
                 </span>
               </div>
             : <input type="number" min="0" step="0.01" className="num-input"
@@ -917,26 +918,70 @@ function ResultBox({ label, val, sub, highlight }) {
 }
 
 // ── Size Breakdown table ───────────────────────────────────────────────────────
+// Original S&S price for a row (rows saved before ssPrice existed fall back to the current price)
+const rowSsPrice = (r) => parseFloat(r.ssPrice ?? r.price) || 0;
+const rowIsAdjusted = (r) => r.ssPrice != null && Math.abs((parseFloat(r.price) || 0) - rowSsPrice(r)) > 0.004;
+
 function SizeBreakdown({ breakdown, itemId, onChange }) {
+  const [pctOff, setPctOff] = React.useState('');
   if (!breakdown || breakdown.length === 0) return null;
   const total = breakdown.reduce((s, r) => s + (parseInt(r.qty) || 0), 0);
   const cost  = breakdown.reduce((s, r) => s + (parseFloat(r.price) || 0) * (parseInt(r.qty) || 0), 0);
+  const anyAdjusted = breakdown.some(rowIsAdjusted);
+
+  const setPrice = (i, raw) => {
+    const nb = breakdown.map((r, j) => j === i
+      ? { ...r, ssPrice: r.ssPrice ?? r.price, price: raw.replace(/[^0-9.]/g, '') }
+      : r);
+    onChange(itemId, 'sizeBreakdown', nb);
+  };
+  const applyPctOff = () => {
+    const pct = percentNum(pctOff);
+    if (pct <= 0) return;
+    const nb = breakdown.map(r => {
+      const base = rowSsPrice(r);
+      return { ...r, ssPrice: base, price: (base * (1 - pct / 100)).toFixed(2) };
+    });
+    onChange(itemId, 'sizeBreakdown', nb);
+  };
+  const resetPrices = () => {
+    onChange(itemId, 'sizeBreakdown', breakdown.map(r => ({ ...r, price: rowSsPrice(r) })));
+    setPctOff('');
+  };
+
   return (
     <div style={{ marginTop: 14, padding: '10px 14px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
           Size Breakdown — enter qty per size
         </div>
-        <button onClick={() => onChange(itemId, 'sizeBreakdown', [])}
-          style={{ fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px' }}>
-          ✕ Clear sizes
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 11, color: '#64748b' }}>Sale:</span>
+          <input type="number" min="0" max="100" step="1" placeholder="% off" value={pctOff}
+            onChange={e => setPctOff(sanitizeNumberInput(e.target.value, { min: 0, max: 100 }))}
+            onKeyDown={e => { if (e.key === 'Enter') applyPctOff(); }}
+            style={{ width: 62, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12 }} />
+          <button onClick={applyPctOff}
+            style={{ fontSize: 11, fontWeight: 700, color: '#C41C1C', background: '#fff0f0', border: '1px solid #C41C1C', borderRadius: 4, padding: '3px 8px', cursor: 'pointer' }}>
+            Apply to all
+          </button>
+          {anyAdjusted && (
+            <button onClick={resetPrices}
+              style={{ fontSize: 11, color: '#64748b', background: 'none', border: '1px solid #d1d5db', borderRadius: 4, padding: '3px 8px', cursor: 'pointer' }}>
+              ↺ Reset to S&amp;S
+            </button>
+          )}
+          <button onClick={() => onChange(itemId, 'sizeBreakdown', [])}
+            style={{ fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px' }}>
+            ✕ Clear sizes
+          </button>
+        </div>
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
         <thead>
           <tr style={{ borderBottom: '1.5px solid #e2e8f0' }}>
             <th style={{ textAlign: 'left',   padding: '3px 8px', color: '#64748b', fontWeight: 600, fontSize: 11 }}>Size</th>
-            <th style={{ textAlign: 'right',  padding: '3px 8px', color: '#64748b', fontWeight: 600, fontSize: 11 }}>S&amp;S Price</th>
+            <th style={{ textAlign: 'right',  padding: '3px 8px', color: '#64748b', fontWeight: 600, fontSize: 11 }}>Your Cost</th>
             <th style={{ textAlign: 'center', padding: '3px 8px', color: '#64748b', fontWeight: 600, fontSize: 11 }}>Qty</th>
             <th style={{ textAlign: 'right',  padding: '3px 8px', color: '#64748b', fontWeight: 600, fontSize: 11 }}>Subtotal</th>
           </tr>
@@ -947,8 +992,18 @@ function SizeBreakdown({ breakdown, itemId, onChange }) {
             return (
               <tr key={row.sizeID || i} style={{ borderBottom: '1px solid #f1f5f9' }}>
                 <td style={{ padding: '4px 8px', fontWeight: 600, color: '#374151' }}>{row.sizeName}</td>
-                <td style={{ padding: '4px 8px', textAlign: 'right', color: '#374151' }}>
-                  ${(parseFloat(row.price) || 0).toFixed(2)}
+                <td style={{ padding: '4px 8px', textAlign: 'right', color: '#374151', whiteSpace: 'nowrap' }}>
+                  {rowIsAdjusted(row) && (
+                    <span title="Original S&S price" style={{ fontSize: 10, color: '#9ca3af', textDecoration: 'line-through', marginRight: 6 }}>
+                      ${rowSsPrice(row).toFixed(2)}
+                    </span>
+                  )}
+                  <span style={{ color: '#9ca3af', marginRight: 2 }}>$</span>
+                  <input type="text" inputMode="decimal" value={row.price}
+                    onChange={e => setPrice(i, e.target.value)}
+                    style={{ width: 64, padding: '3px 6px', textAlign: 'right', fontSize: 12, borderRadius: 4,
+                      border: `1px solid ${rowIsAdjusted(row) ? '#16a34a' : '#d1d5db'}`,
+                      background: rowIsAdjusted(row) ? '#f0fdf4' : '#fff' }} />
                 </td>
                 <td style={{ padding: '4px 8px', textAlign: 'center' }}>
                   <input type="number" min="0" value={row.qty}
@@ -1132,6 +1187,134 @@ function buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimate
     <!-- Footer -->
     <div style="background:#1A1A1A;padding:12px 28px;border-radius:0 0 8px 8px;text-align:center">
       <span style="color:#666;font-size:11px">SRF Screen Printing &amp; Apparel Decorating · Estimate valid for 30 days</span>
+    </div>
+  </div>`;
+}
+
+// ── Invoice PDF Builder (from Shopify order/draft data) ───────────────────────
+function buildInvoicePdfHtml(inv, fallbackClientName) {
+  const addrLines = (a) => a ? [
+    a.name, a.company, a.address1, a.address2,
+    [a.city, a.provinceCode, a.zip].filter(Boolean).join(', '),
+  ].filter(Boolean).map(escapeHtml) : [];
+  const billTo = addrLines(inv.billingAddress);
+  if (!billTo.length) {
+    const n = inv.customer?.name || fallbackClientName;
+    if (n) billTo.push(escapeHtml(n));
+  }
+  if (inv.customer?.email) billTo.push(escapeHtml(inv.customer.email));
+
+  const status = String(inv.financialStatus || '').toUpperCase();
+  const isPaid = status === 'PAID';
+  const statusLabel = {
+    PAID: 'PAID', PARTIALLY_PAID: 'PARTIALLY PAID', PENDING: 'PAYMENT DUE', UNPAID: 'PAYMENT DUE',
+    AUTHORIZED: 'PAYMENT DUE', REFUNDED: 'REFUNDED', PARTIALLY_REFUNDED: 'PARTIALLY REFUNDED', VOIDED: 'VOID',
+  }[status] || status.replace(/_/g, ' ');
+
+  const rows = inv.lines.map(li => `
+      <tr style="border-bottom:1px solid #f0f0f0;page-break-inside:avoid">
+        <td style="padding:9px 10px;font-size:12px;font-weight:700;color:#1A1A1A;word-break:break-word">${escapeHtml(li.title)}${
+          li.lineDiscount > 0.004 ? `<div style="font-size:10px;font-weight:400;color:#16a34a">Includes $${fmt(li.lineDiscount)} discount</div>` : ''}</td>
+        <td style="padding:9px 8px;text-align:center;font-size:12px;color:#555">${li.quantity}</td>
+        <td style="padding:9px 8px;text-align:right;font-size:12px;color:#555;white-space:nowrap">$${fmt(li.unitPrice)}</td>
+        <td style="padding:9px 10px;text-align:right;font-size:13px;font-weight:700;color:#1A1A1A;white-space:nowrap">$${fmt(li.total)}</td>
+      </tr>`).join('');
+
+  const totalRow = (label, value, color) => `
+              <tr style="border-bottom:1px solid #e5e7eb">
+                <td style="padding:5px 0;font-size:13px;color:${color || '#555'}">${label}</td>
+                <td style="padding:5px 0;font-size:13px;font-weight:600;text-align:right;color:${color || '#1A1A1A'}">${value}</td>
+              </tr>`;
+  // Subtotal from the line totals (line-level discounts already applied); whatever remains
+  // between that and Shopify's total is the order-level discount
+  const subtotal = inv.lines.reduce((s, li) => s + li.total, 0);
+  const orderDiscount = Math.max(0, subtotal + inv.shipping + inv.tax - inv.total);
+
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif;max-width:760px;margin:0 auto;padding:0;color:#1A1A1A;background:#fff">
+
+    <table style="width:100%;border-collapse:collapse;background:#1A1A1A;border-radius:8px 8px 0 0">
+      <tr>
+        <td style="padding:20px 28px;vertical-align:middle;width:55%">
+          <table style="border-collapse:collapse"><tr>
+            <td style="background:#fff;border-radius:6px;padding:6px 10px;vertical-align:middle">
+              <img src="data:image/png;base64,${LOGO_B64}" style="height:54px;max-width:170px;display:block" alt="SRF Logo" />
+            </td>
+          </tr></table>
+        </td>
+        <td style="padding:20px 28px;vertical-align:middle;text-align:right;width:45%">
+          <div style="color:#C41C1C;font-size:27px;font-weight:800">INVOICE</div>
+          <div style="color:#aaa;font-size:12px">No. ${escapeHtml(inv.name)}</div>
+          <div style="color:#aaa;font-size:12px">${escapeHtml(inv.date)}</div>
+        </td>
+      </tr>
+    </table>
+
+    <div style="background:#C41C1C;padding:10px 28px">
+      <table style="width:100%;border-collapse:collapse"><tr>
+        <td style="color:#fff;font-size:13px;font-weight:700">SRF Screen Printing &amp; Apparel Decorating</td>
+        <td style="text-align:right">
+          <span style="background:${isPaid ? '#16a34a' : '#fff'};color:${isPaid ? '#fff' : '#C41C1C'};font-size:11px;font-weight:800;letter-spacing:.08em;padding:3px 10px;border-radius:4px">${escapeHtml(statusLabel)}</span>
+        </td>
+      </tr></table>
+    </div>
+
+    ${billTo.length ? `
+    <div style="padding:14px 28px;border-bottom:1px solid #e5e7eb">
+      <div style="font-size:11px;font-weight:700;color:#C41C1C;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Bill To</div>
+      <div style="font-size:12px;color:#333;line-height:1.5">${billTo.join('<br>')}</div>
+    </div>` : ''}
+
+    <div style="background:#fff;padding:0 0 8px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed">
+        <colgroup>
+          <col style="width:55%" /><col style="width:11%" /><col style="width:15%" /><col style="width:19%" />
+        </colgroup>
+        <thead>
+          <tr style="background:#1A1A1A;color:#fff">
+            <th style="padding:9px 10px;text-align:left;font-weight:700;font-size:12px">Item</th>
+            <th style="padding:9px 8px;text-align:center;font-weight:700;font-size:12px">Qty</th>
+            <th style="padding:9px 8px;text-align:right;font-weight:700;font-size:12px">Unit</th>
+            <th style="padding:9px 10px;text-align:right;font-weight:700;font-size:12px">Total</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+
+    <div style="background:#f9f9f9;padding:16px 28px;border-top:2px solid #C41C1C">
+      <table style="width:100%;border-collapse:collapse">
+        <tr>
+          <td style="width:52%"></td>
+          <td style="width:48%;vertical-align:top">
+            <table style="width:100%;border-collapse:collapse">
+              ${totalRow('Subtotal', `$${fmt(subtotal)}`)}
+              ${orderDiscount > 0.004 ? totalRow('Discount', `-$${fmt(orderDiscount)}`, '#16a34a') : ''}
+              ${inv.shipping > 0.004 ? totalRow('Shipping', `$${fmt(inv.shipping)}`) : ''}
+              ${totalRow('Tax', `$${fmt(inv.tax)}`)}
+              <tr>
+                <td style="padding:8px 0 4px;font-weight:700;font-size:15px">Total</td>
+                <td style="padding:8px 0 4px;font-weight:800;font-size:19px;text-align:right;white-space:nowrap">$${fmt(inv.total)}</td>
+              </tr>
+              ${inv.paid > 0.004 ? totalRow('Amount Paid', `-$${fmt(inv.paid)}`, '#16a34a') : ''}
+              <tr>
+                <td style="padding:8px 0 4px;font-weight:700;font-size:15px">Balance Due</td>
+                <td style="padding:8px 0 4px;font-weight:800;font-size:21px;color:#C41C1C;text-align:right;white-space:nowrap">$${fmt(inv.balanceDue)}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    ${inv.note ? `
+    <div style="background:#fff;padding:15px 28px;border-top:1px solid #e5e7eb;page-break-inside:avoid">
+      <div style="font-size:12px;font-weight:700;color:#C41C1C;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Notes</div>
+      <div style="font-size:12px;color:#555;line-height:1.55;word-break:break-word">${escapeHtml(inv.note).replace(/\n/g, '<br>')}</div>
+    </div>` : ''}
+
+    <div style="background:#1A1A1A;padding:12px 28px;border-radius:0 0 8px 8px;text-align:center">
+      <span style="color:#666;font-size:11px">SRF Screen Printing &amp; Apparel Decorating · Thank you for your business</span>
     </div>
   </div>`;
 }
@@ -1342,6 +1525,32 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
   onSave, onNew, onLoadOpen, saving, savedId, autoSaveStatus }) {
   const [shopifySending, setShopifySending] = React.useState(false);
   const [shopifyResult, setShopifyResult]   = React.useState(null);
+  const [invoiceOrder, setInvoiceOrder]     = React.useState('');
+  const [invoiceLoading, setInvoiceLoading] = React.useState(false);
+  const [invoiceError, setInvoiceError]     = React.useState('');
+
+  const exportInvoice = async () => {
+    // Open the window inside the click so popup blockers allow it; fill it after the lookup
+    const win = window.open('', '_blank');
+    if (!win) { alert('Please allow popups for this site to export PDFs.'); return; }
+    win.document.write('<p style="font-family:Arial,sans-serif;padding:40px;color:#555">Loading invoice from Shopify…</p>');
+    setInvoiceLoading(true);
+    setInvoiceError('');
+    try {
+      const res = await fetch(`/api/shopify?name=${encodeURIComponent(invoiceOrder.trim())}`);
+      const inv = await res.json();
+      if (!res.ok) throw new Error(inv.error || 'Shopify lookup failed');
+      const fileName = ['SRF-Invoice', safeFilePart(inv.name), clientName ? safeFilePart(clientName) : '']
+        .filter(Boolean).join('_') + '.pdf';
+      win.document.open();
+      renderHtmlToPdf(buildInvoicePdfHtml(inv, clientName), fileName, win);
+    } catch (err) {
+      win.close();
+      setInvoiceError(err.message);
+    } finally {
+      setInvoiceLoading(false);
+    }
+  };
 
   const sendToShopify = async () => {
     setShopifySending(true);
@@ -1372,6 +1581,7 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to create draft');
       setShopifyResult(data);
+      if (data.name) setInvoiceOrder(data.name);
 
       // ── Write job to the order status board ──────────────────────────────
       try {
@@ -1409,8 +1619,8 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
     }
   };
 
-  const renderHtmlToPdf = (html, fileName) => {
-    const win = window.open('', '_blank');
+  const renderHtmlToPdf = (html, fileName, openedWin) => {
+    const win = openedWin || window.open('', '_blank');
     if (!win) {
       alert('Please allow popups for this site to export PDFs.');
       return;
@@ -1640,6 +1850,23 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
           }
         </div>
       )}
+
+      {/* ── Invoice from Shopify ── */}
+      <div className="divider mt-4 mb-3" />
+      <div className="section-head mb-2">Final Invoice</div>
+      <div className="flex gap-2">
+        <input className="num-input" style={{ flex: 1 }} placeholder="Shopify # e.g. 1045 or D12"
+          value={invoiceOrder} onChange={e => setInvoiceOrder(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && invoiceOrder.trim() && !invoiceLoading) exportInvoice(); }} />
+        <button onClick={exportInvoice} disabled={!invoiceOrder.trim() || invoiceLoading}
+          className="py-2 px-3 rounded-lg font-bold text-xs uppercase tracking-wide"
+          style={{ background: !invoiceOrder.trim() || invoiceLoading ? '#9ca3af' : '#1A1A1A', color: '#fff',
+            cursor: !invoiceOrder.trim() || invoiceLoading ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+          {invoiceLoading ? 'Loading…' : '🧾 Invoice PDF'}
+        </button>
+      </div>
+      {invoiceError && <div style={{ marginTop: 6, fontSize: 12, color: '#dc2626' }}>⚠ {invoiceError}</div>}
+      <p className="text-xs text-gray-400 mt-2">Pulls final pricing, tax, shipping &amp; payments from the Shopify order</p>
     </div>
   );
 }
