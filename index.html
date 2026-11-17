@@ -1191,6 +1191,128 @@ function buildPdfHtml(items, calcs, totals, clientName, estimateNumber, estimate
   </div>`;
 }
 
+// ── Invoice PDF Builder (from a Shopify draft order) ──────────────────────────
+function buildInvoicePdfHtml(inv, isPaid, fallbackClientName) {
+  const a = inv.billingAddress;
+  const billTo = a ? [
+    a.name, a.company, a.address1, a.address2,
+    [a.city, a.provinceCode, a.zip].filter(Boolean).join(', '),
+  ].filter(Boolean).map(escapeHtml) : [];
+  if (!billTo.length) {
+    const n = inv.customer?.name || fallbackClientName;
+    if (n) billTo.push(escapeHtml(n));
+  }
+  if (inv.customer?.email) billTo.push(escapeHtml(inv.customer.email));
+
+  const rows = inv.lines.map(li => `
+      <tr style="border-bottom:1px solid #f0f0f0;page-break-inside:avoid">
+        <td style="padding:9px 10px;font-size:12px;font-weight:700;color:#1A1A1A;word-break:break-word">${escapeHtml(li.title)}${
+          li.lineDiscount > 0.004 ? `<div style="font-size:10px;font-weight:400;color:#16a34a">Includes $${fmt(li.lineDiscount)} discount</div>` : ''}</td>
+        <td style="padding:9px 8px;text-align:center;font-size:12px;color:#555">${li.quantity}</td>
+        <td style="padding:9px 8px;text-align:right;font-size:12px;color:#555;white-space:nowrap">$${fmt(li.unitPrice)}</td>
+        <td style="padding:9px 10px;text-align:right;font-size:13px;font-weight:700;color:#1A1A1A;white-space:nowrap">$${fmt(li.total)}</td>
+      </tr>`).join('');
+
+  const totalRow = (label, value, color) => `
+              <tr style="border-bottom:1px solid #e5e7eb">
+                <td style="padding:5px 0;font-size:13px;color:${color || '#555'}">${label}</td>
+                <td style="padding:5px 0;font-size:13px;font-weight:600;text-align:right;color:${color || '#1A1A1A'}">${value}</td>
+              </tr>`;
+  // Subtotal from line totals (line discounts already applied); the remainder
+  // between that and Shopify's total is the order-level discount
+  const subtotal = inv.lines.reduce((s, li) => s + li.total, 0);
+  const orderDiscount = Math.max(0, subtotal + inv.shipping + inv.tax - inv.total);
+  const balanceDue = isPaid ? 0 : inv.total;
+
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif;max-width:760px;margin:0 auto;padding:0;color:#1A1A1A;background:#fff">
+
+    <table style="width:100%;border-collapse:collapse;background:#1A1A1A;border-radius:8px 8px 0 0">
+      <tr>
+        <td style="padding:20px 28px;vertical-align:middle;width:55%">
+          <table style="border-collapse:collapse"><tr>
+            <td style="background:#fff;border-radius:6px;padding:6px 10px;vertical-align:middle">
+              <img src="data:image/png;base64,${LOGO_B64}" style="height:54px;max-width:170px;display:block" alt="SRF Logo" />
+            </td>
+          </tr></table>
+        </td>
+        <td style="padding:20px 28px;vertical-align:middle;text-align:right;width:45%">
+          <div style="color:#C41C1C;font-size:27px;font-weight:800">INVOICE</div>
+          <div style="color:#aaa;font-size:12px">No. ${escapeHtml(inv.name)}</div>
+          <div style="color:#aaa;font-size:12px">${escapeHtml(inv.date)}</div>
+        </td>
+      </tr>
+    </table>
+
+    <div style="background:#C41C1C;padding:10px 28px">
+      <table style="width:100%;border-collapse:collapse"><tr>
+        <td style="color:#fff;font-size:13px;font-weight:700">SRF Screen Printing &amp; Apparel Decorating</td>
+        <td style="text-align:right">
+          <span style="background:${isPaid ? '#16a34a' : '#fff'};color:${isPaid ? '#fff' : '#C41C1C'};font-size:11px;font-weight:800;letter-spacing:.08em;padding:3px 10px;border-radius:4px">${isPaid ? 'PAID' : 'PAYMENT DUE'}</span>
+        </td>
+      </tr></table>
+    </div>
+
+    ${billTo.length ? `
+    <div style="padding:14px 28px;border-bottom:1px solid #e5e7eb">
+      <div style="font-size:11px;font-weight:700;color:#C41C1C;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Bill To</div>
+      <div style="font-size:12px;color:#333;line-height:1.5">${billTo.join('<br>')}</div>
+    </div>` : ''}
+
+    <div style="background:#fff;padding:0 0 8px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed">
+        <colgroup>
+          <col style="width:55%" /><col style="width:11%" /><col style="width:15%" /><col style="width:19%" />
+        </colgroup>
+        <thead>
+          <tr style="background:#1A1A1A;color:#fff">
+            <th style="padding:9px 10px;text-align:left;font-weight:700;font-size:12px">Item</th>
+            <th style="padding:9px 8px;text-align:center;font-weight:700;font-size:12px">Qty</th>
+            <th style="padding:9px 8px;text-align:right;font-weight:700;font-size:12px">Unit</th>
+            <th style="padding:9px 10px;text-align:right;font-weight:700;font-size:12px">Total</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+
+    <div style="background:#f9f9f9;padding:16px 28px;border-top:2px solid #C41C1C">
+      <table style="width:100%;border-collapse:collapse">
+        <tr>
+          <td style="width:52%"></td>
+          <td style="width:48%;vertical-align:top">
+            <table style="width:100%;border-collapse:collapse">
+              ${totalRow('Subtotal', `$${fmt(subtotal)}`)}
+              ${orderDiscount > 0.004 ? totalRow('Discount', `-$${fmt(orderDiscount)}`, '#16a34a') : ''}
+              ${inv.shipping > 0.004 ? totalRow('Shipping', `$${fmt(inv.shipping)}`) : ''}
+              ${totalRow('Tax', `$${fmt(inv.tax)}`)}
+              <tr>
+                <td style="padding:8px 0 4px;font-weight:700;font-size:15px">Total</td>
+                <td style="padding:8px 0 4px;font-weight:800;font-size:19px;text-align:right;white-space:nowrap">$${fmt(inv.total)}</td>
+              </tr>
+              ${isPaid ? totalRow('Amount Paid', `-$${fmt(inv.total)}`, '#16a34a') : ''}
+              <tr>
+                <td style="padding:8px 0 4px;font-weight:700;font-size:15px">Balance Due</td>
+                <td style="padding:8px 0 4px;font-weight:800;font-size:21px;color:#C41C1C;text-align:right;white-space:nowrap">$${fmt(balanceDue)}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    ${inv.note ? `
+    <div style="background:#fff;padding:15px 28px;border-top:1px solid #e5e7eb;page-break-inside:avoid">
+      <div style="font-size:12px;font-weight:700;color:#C41C1C;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Notes</div>
+      <div style="font-size:12px;color:#555;line-height:1.55;word-break:break-word">${escapeHtml(inv.note).replace(/\n/g, '<br>')}</div>
+    </div>` : ''}
+
+    <div style="background:#1A1A1A;padding:12px 28px;border-radius:0 0 8px 8px;text-align:center">
+      <span style="color:#666;font-size:11px">SRF Screen Printing &amp; Apparel Decorating · Thank you for your business</span>
+    </div>
+  </div>`;
+}
+
 // ── Internal PDF Builder ──────────────────────────────────────────────────────
 function buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, estimateDate, notes,
   discountAmount, discountedTotal, discountType, discountValue, marginPct, multiplier, effectiveMargin) {
@@ -1398,6 +1520,38 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
   const [shopifySending, setShopifySending] = React.useState(false);
   const [shopifyResult, setShopifyResult]   = React.useState(null);
 
+  const [invoiceDraft, setInvoiceDraft]     = React.useState('');
+  const [invoiceData, setInvoiceData]       = React.useState(null);
+  const [invoicePaid, setInvoicePaid]       = React.useState(false);
+  const [invoiceLoading, setInvoiceLoading] = React.useState(false);
+  const [invoiceError, setInvoiceError]     = React.useState('');
+
+  const lookupInvoice = async () => {
+    setInvoiceLoading(true);
+    setInvoiceError('');
+    setInvoiceData(null);
+    try {
+      const { data: { session } } = await _supabase.auth.getSession();
+      const res = await fetch(`/api/shopify?name=${encodeURIComponent(invoiceDraft.trim())}`, {
+        headers: { 'Authorization': `Bearer ${session?.access_token || ''}` },
+      });
+      const inv = await res.json();
+      if (!res.ok) throw new Error(inv.error || 'Shopify lookup failed');
+      setInvoiceData(inv);
+      setInvoicePaid(inv.completed); // completed drafts are usually paid; user can untick
+    } catch (err) {
+      setInvoiceError(err.message);
+    } finally {
+      setInvoiceLoading(false);
+    }
+  };
+
+  const printInvoice = () => {
+    const fileName = ['SRF-Invoice', safeFilePart(invoiceData.name), clientName ? safeFilePart(clientName) : '']
+      .filter(Boolean).join('_') + '.pdf';
+    renderHtmlToPdf(buildInvoicePdfHtml(invoiceData, invoicePaid, clientName), fileName);
+  };
+
   const sendToShopify = async () => {
     setShopifySending(true);
     setShopifyResult(null);
@@ -1431,6 +1585,7 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to create draft');
       setShopifyResult(data);
+      if (data.name) { setInvoiceDraft(data.name); setInvoiceData(null); }
 
       // ── Write job to the order status board ──────────────────────────────
       try {
@@ -1699,6 +1854,44 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
           }
         </div>
       )}
+
+      {/* ── Final invoice from the Shopify draft ── */}
+      <div className="divider mt-4 mb-3" />
+      <div className="section-head mb-2">Final Invoice</div>
+      <div className="flex gap-2">
+        <input className="num-input" style={{ flex: 1 }} placeholder="Draft # e.g. D12"
+          value={invoiceDraft}
+          onChange={e => { setInvoiceDraft(e.target.value); setInvoiceData(null); setInvoiceError(''); }}
+          onKeyDown={e => { if (e.key === 'Enter' && invoiceDraft.trim() && !invoiceLoading) lookupInvoice(); }} />
+        <button onClick={lookupInvoice} disabled={!invoiceDraft.trim() || invoiceLoading}
+          className="py-2 px-3 rounded-lg font-bold text-xs uppercase tracking-wide"
+          style={{ background: !invoiceDraft.trim() || invoiceLoading ? '#9ca3af' : '#1A1A1A', color: '#fff',
+            cursor: !invoiceDraft.trim() || invoiceLoading ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+          {invoiceLoading ? 'Loading…' : 'Look Up'}
+        </button>
+      </div>
+      {invoiceError && <div style={{ marginTop: 6, fontSize: 12, color: '#dc2626' }}>⚠ {invoiceError}</div>}
+      {invoiceData && (
+        <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 8, background: '#f9fafb', border: '1px solid #e5e7eb', fontSize: 12 }}>
+          <div className="result-row">
+            <span className="result-label">{invoiceData.name}{invoiceData.customer?.name ? ` · ${invoiceData.customer.name}` : ''}</span>
+            <span className="result-val">{fmtDollar(invoiceData.total)}</span>
+          </div>
+          <div style={{ color: '#6b7280', marginTop: 2 }}>
+            {invoiceData.completed ? 'Completed in Shopify' : 'Still an open draft in Shopify'} · {invoiceData.lines.length} line item{invoiceData.lines.length === 1 ? '' : 's'}
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, cursor: 'pointer', fontWeight: 600, color: '#1A1A1A' }}>
+            <input type="checkbox" checked={invoicePaid} onChange={e => setInvoicePaid(e.target.checked)} />
+            Mark as paid
+          </label>
+          <button onClick={printInvoice}
+            className="w-full mt-2 py-2 px-3 rounded-lg font-bold text-xs uppercase tracking-wide"
+            style={{ background: '#C41C1C', color: '#fff', cursor: 'pointer' }}>
+            🧾 Print Invoice ({invoicePaid ? 'Paid' : 'Payment Due'})
+          </button>
+        </div>
+      )}
+      <p className="text-xs text-gray-400 mt-2">Uses the saved Shopify draft: your price edits &amp; discounts, plus tax &amp; shipping</p>
     </div>
   );
 }
