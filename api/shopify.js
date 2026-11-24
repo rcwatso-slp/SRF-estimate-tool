@@ -24,8 +24,9 @@ async function isSignedIn(req) {
 const MONEY = 'shopMoney { amount }';
 const DRAFT_FIELDS = `
   name createdAt completedAt status note2
-  customer { displayName email }
+  customer { displayName email phone }
   billingAddress { name company address1 address2 city provinceCode zip }
+  shippingAddress { name company address1 address2 city provinceCode zip phone }
   lineItems(first: 100) { nodes {
     title variantTitle quantity
     originalUnitPriceSet { ${MONEY} }
@@ -66,8 +67,9 @@ async function lookupDraft(store, token, rawName) {
     completed: d.status === 'COMPLETED',
     date: (d.completedAt || d.createdAt || '').slice(0, 10),
     note: d.note2 || '',
-    customer: d.customer ? { name: d.customer.displayName, email: d.customer.email } : null,
+    customer: d.customer ? { name: d.customer.displayName, email: d.customer.email, phone: d.customer.phone } : null,
     billingAddress: d.billingAddress || null,
+    shippingAddress: d.shippingAddress || null,
     lines: (d.lineItems?.nodes || []).map(li => ({
       title:        li.variantTitle ? `${li.title} — ${li.variantTitle}` : li.title,
       quantity:     li.quantity,

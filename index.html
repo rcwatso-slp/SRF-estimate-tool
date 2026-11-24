@@ -1313,6 +1313,65 @@ function buildInvoicePdfHtml(inv, isPaid, fallbackClientName) {
   </div>`;
 }
 
+// ── 4×6 Box Label Builder ─────────────────────────────────────────────────────
+// lbl: { orderRef, estimateNumber, date, customerName, address, phone, items: [{ name, detail, qty, sizes }] }
+// No prices — this goes on the outside of the box.
+function buildBoxLabelHtml(lbl) {
+  const a = lbl.address;
+  const addrLines = a ? [
+    a.company, a.address1, a.address2,
+    [a.city, a.provinceCode].filter(Boolean).join(', ') + (a.zip ? ` ${a.zip}` : ''),
+  ].filter(s => s && s.trim()).map(escapeHtml) : [];
+  const totalUnits = lbl.items.reduce((s, it) => s + (it.qty || 0), 0);
+  // Shrink type a little for long orders so most fit on one label
+  const dense = lbl.items.length > 4;
+
+  const itemRows = lbl.items.map(it => `
+      <tr style="border-bottom:1px solid #e5e7eb;page-break-inside:avoid">
+        <td style="padding:${dense ? 3 : 5}px 0;vertical-align:top">
+          <div style="font-size:${dense ? 10 : 11.5}px;font-weight:800;color:#1A1A1A;line-height:1.25;word-break:break-word">${escapeHtml(it.name)}</div>
+          ${it.detail ? `<div style="font-size:${dense ? 8.5 : 9.5}px;color:#555">${escapeHtml(it.detail)}</div>` : ''}
+          ${it.sizes ? `<div style="font-size:${dense ? 8.5 : 9.5}px;color:#333;margin-top:1px">${escapeHtml(it.sizes)}</div>` : ''}
+        </td>
+        <td style="padding:${dense ? 3 : 5}px 0 ${dense ? 3 : 5}px 8px;text-align:right;vertical-align:top;font-size:${dense ? 12 : 14}px;font-weight:800;color:#C41C1C;white-space:nowrap">×${it.qty}</td>
+      </tr>`).join('');
+
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif;width:4in;min-height:6in;box-sizing:border-box;padding:0.14in 0.18in;color:#1A1A1A;background:#fff">
+    <!-- Logo PNG has wide white margins; crop to the artwork (rows ~122–276 of 400) -->
+    <div style="text-align:center;border-bottom:3px solid #C41C1C;height:1.08in;overflow:hidden">
+      <img src="data:image/png;base64,${LOGO_B64}" style="height:2.58in;margin-top:-0.75in;display:inline-block" alt="Savage Rep Fitness" />
+    </div>
+
+    <div style="margin-top:8px">
+      <div style="font-size:9px;font-weight:800;color:#C41C1C;letter-spacing:.12em">SHIP TO</div>
+      <div style="font-size:17px;font-weight:800;line-height:1.2;word-break:break-word">${escapeHtml(lbl.customerName || '')}</div>
+      ${addrLines.length ? `<div style="font-size:12px;line-height:1.35;margin-top:2px">${addrLines.join('<br>')}</div>` : ''}
+      ${lbl.phone ? `<div style="font-size:11px;color:#555;margin-top:2px">${escapeHtml(lbl.phone)}</div>` : ''}
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;margin-top:8px;background:#1A1A1A;color:#fff">
+      <tr>
+        ${lbl.orderRef ? `<td style="padding:5px 8px;font-size:10px"><span style="color:#aaa">ORDER</span><br><b style="font-size:13px">${escapeHtml(lbl.orderRef)}</b></td>` : ''}
+        ${lbl.estimateNumber ? `<td style="padding:5px 8px;font-size:10px"><span style="color:#aaa">EST #</span><br><b style="font-size:13px">${escapeHtml(lbl.estimateNumber)}</b></td>` : ''}
+        <td style="padding:5px 8px;font-size:10px;text-align:right"><span style="color:#aaa">UNITS</span><br><b style="font-size:13px">${totalUnits}</b></td>
+      </tr>
+    </table>
+
+    <div style="margin-top:6px">
+      <div style="font-size:9px;font-weight:800;color:#C41C1C;letter-spacing:.12em;margin-bottom:1px">CONTENTS</div>
+      <table style="width:100%;border-collapse:collapse">${itemRows}</table>
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;margin-top:8px;font-size:11px">
+      <tr>
+        <td style="color:#555">${escapeHtml(lbl.date || '')}</td>
+        <td style="text-align:right;font-weight:700">BOX ____ OF ____</td>
+      </tr>
+    </table>
+  </div>`;
+}
+
 // ── Internal PDF Builder ──────────────────────────────────────────────────────
 function buildInternalPdfHtml(items, calcs, totals, clientName, estimateNumber, estimateDate, notes,
   discountAmount, discountedTotal, discountType, discountValue, marginPct, multiplier, effectiveMargin) {
@@ -1552,6 +1611,54 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
     renderHtmlToPdf(buildInvoicePdfHtml(invoiceData, invoicePaid, clientName), fileName);
   };
 
+  // Box label: customer/address from the looked-up draft when there is one, else the estimate.
+  // Sizes only live in the estimate, so draft lines are matched back to estimate items by name.
+  const printBoxLabel = () => {
+    const decLabels = { screen_transfer: 'Screen Print Transfer', ucm: 'UCM Transfer', patch: 'Heat-Applied Patch' };
+    const sizesOf = (item) => (item?.sizeBreakdown || [])
+      .filter(r => (parseInt(r.qty) || 0) > 0)
+      .map(r => `${r.sizeName} ×${parseInt(r.qty)}`).join('  ·  ');
+    const fromEstimate = items
+      .map((item, i) => ({ item, qty: calcs[i]?.qty || 0 }))
+      .filter(({ item, qty }) => qty > 0 && (item.name || '').trim())
+      .map(({ item, qty }) => ({
+        name: item.name, detail: decLabels[item.decorationType] || '', qty, sizes: sizesOf(item),
+      }));
+
+    let lbl;
+    if (invoiceData) {
+      const d = invoiceData;
+      // Draft line titles are "<item name> — <decoration>" (see /api/shopify)
+      const splitTitle = (title) => {
+        const cut = title.lastIndexOf(' — ');
+        return cut > 0 ? [title.slice(0, cut), title.slice(cut + 3)] : [title, ''];
+      };
+      const hasStreet = (a) => a && (a.address1 || '').trim();
+      const address = hasStreet(d.shippingAddress) ? d.shippingAddress
+        : hasStreet(d.billingAddress) ? d.billingAddress : null;
+      lbl = {
+        orderRef: d.name,
+        estimateNumber,
+        date: d.date,
+        customerName: address?.name || d.customer?.name || d.shippingAddress?.name || clientName,
+        address,
+        phone: address?.phone || d.customer?.phone || '',
+        items: d.lines.map(li => {
+          const [name, detail] = splitTitle(li.title);
+          const est = items.find(it => (it.name || '').trim() === name.trim());
+          return { name, detail, qty: li.quantity, sizes: est ? sizesOf(est) : '' };
+        }),
+      };
+    } else {
+      lbl = { orderRef: '', estimateNumber, date: estimateDate, customerName: clientName, address: null, phone: '', items: fromEstimate };
+    }
+    if (!lbl.items.length) { alert('Add at least one named item (or look up a draft) to print a box label.'); return; }
+
+    const fileName = ['SRF-BoxLabel', lbl.orderRef ? safeFilePart(lbl.orderRef) : '', lbl.customerName ? safeFilePart(lbl.customerName) : '']
+      .filter(Boolean).join('_') + '.pdf';
+    renderHtmlToPdf(buildBoxLabelHtml(lbl), fileName, '@page { size: 4in 6in; margin: 0; }');
+  };
+
   const sendToShopify = async () => {
     setShopifySending(true);
     setShopifyResult(null);
@@ -1623,7 +1730,7 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
     }
   };
 
-  const renderHtmlToPdf = (html, fileName) => {
+  const renderHtmlToPdf = (html, fileName, pageRule = '@page { size: A4; margin: 8mm; }') => {
     const win = window.open('', '_blank');
     if (!win) {
       alert('Please allow popups for this site to export PDFs.');
@@ -1638,7 +1745,7 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
     * { box-sizing: border-box; }
     body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
     @media print {
-      @page { size: A4; margin: 8mm; }
+      ${pageRule}
       body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
     }
   </style>
@@ -1891,7 +1998,12 @@ function SummaryPanel({ totals, items, calcs, isFreeShipping, clientName, estima
           </button>
         </div>
       )}
-      <p className="text-xs text-gray-400 mt-2">Uses the saved Shopify draft: your price edits &amp; discounts, plus tax &amp; shipping</p>
+      <button onClick={printBoxLabel}
+        className="w-full mt-2 py-2 px-3 rounded-lg font-bold text-xs uppercase tracking-wide"
+        style={{ background: '#fff', color: '#1A1A1A', border: '1.5px solid #1A1A1A', cursor: 'pointer' }}>
+        📦 Print 4×6 Box Label {invoiceData ? `(${invoiceData.name})` : '(from estimate)'}
+      </button>
+      <p className="text-xs text-gray-400 mt-2">Uses the saved Shopify draft: your price edits &amp; discounts, plus tax &amp; shipping. Box label shows customer, address &amp; contents with sizes (no prices).</p>
     </div>
   );
 }
